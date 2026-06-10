@@ -1,0 +1,4 @@
+build/
+prebuilt/
+*.log
+.DS_Store
