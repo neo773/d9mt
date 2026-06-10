@@ -42,22 +42,50 @@ SOURCES=(
   "$V"/src/util/sha1/sha1_util.cpp
   "$V"/src/util/sha1/sha1.c
   "$V"/src/util/sync/sync_recursive.cpp
-  # d9mt
-  "$ROOT"/tools/shim.cpp
-  "$ROOT"/tools/dxso2spv.cpp
+)
+
+SC="$ROOT/vendor/spirv-cross"
+SPIRV_CROSS_SOURCES=(
+  "$SC"/spirv_cross.cpp
+  "$SC"/spirv_parser.cpp
+  "$SC"/spirv_cross_parsed_ir.cpp
+  "$SC"/spirv_cfg.cpp
+  "$SC"/spirv_glsl.cpp
+  "$SC"/spirv_msl.cpp
+)
+
+INCLUDES=(
+  -I "$V/include/native"
+  -I "$V/include/native/windows"
+  -I "$V/include/native/directx"
+  -I "$V/include/vulkan/include"
+  -I "$V/include/spirv/include"
+  -I "$V/src"
+  -I "$V/src/dxvk"
 )
 
 clang++ -std=c++17 -O1 -w \
-  -I "$V/include/native" \
-  -I "$V/include/native/windows" \
-  -I "$V/include/native/directx" \
-  -I "$V/include/vulkan/include" \
-  -I "$V/include/spirv/include" \
-  -I "$V/src" \
-  -I "$V/src/dxvk" \
+  "${INCLUDES[@]}" \
   -DNOMINMAX \
   -Wl,-dead_strip \
   -o "$OUT/dxso2spv" \
-  "${SOURCES[@]}"
+  "${SOURCES[@]}" \
+  "$ROOT"/tools/shim.cpp \
+  "$ROOT"/tools/dxso2spv.cpp
 
 echo "built $OUT/dxso2spv"
+
+# translate-test: the full in-process chain d3d9.dll will use
+# (d9mt_translate.cpp provides the Logger/DxsoOptions definitions, so
+# shim.cpp is excluded here)
+clang++ -std=c++17 -O1 -w \
+  "${INCLUDES[@]}" \
+  -DNOMINMAX \
+  -Wl,-dead_strip \
+  -o "$OUT/translate-test" \
+  "${SOURCES[@]}" \
+  "${SPIRV_CROSS_SOURCES[@]}" \
+  "$ROOT"/src/d3d9/d9mt_translate.cpp \
+  "$ROOT"/tools/translate-test.cpp
+
+echo "built $OUT/translate-test"

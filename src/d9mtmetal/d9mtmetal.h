@@ -88,7 +88,13 @@ struct d9mt_newpso_params {
 #else
 #define D9MT_API __declspec(dllimport)
 #endif
+#ifdef __cplusplus
+extern "C" {
+#endif
 D9MT_API int __cdecl D9MT_UnixCall(unsigned int code, void *params);
+#ifdef __cplusplus
+}
+#endif
 #endif
 
 #endif

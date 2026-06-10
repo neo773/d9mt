@@ -50,6 +50,16 @@ static NTSTATUS d9mt_new_render_pso(void *args) {
   const struct d9mt_pso_info *info =
       (const struct d9mt_pso_info *)(uintptr_t)p->info_ptr;
 
+  // Metal validation reports descriptor errors as NSExceptions, and
+  // [MTLVertexDescriptor vertexDescriptor] is autoreleased: pool + catch
+  // or a bad descriptor kills the whole process
+  NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+  @try {
+
+  // NOTE: vertex/fragment functions MUST be fully specialized (all their
+  // function constants supplied at newFunction time). Building a PSO from
+  // an unspecialized function does not return an NSError - it crashes the
+  // process inside newRenderPipelineStateWithDescriptor.
   MTLRenderPipelineDescriptor *desc =
       [[MTLRenderPipelineDescriptor alloc] init];
   desc.vertexFunction = (id<MTLFunction>)(uintptr_t)info->vertex_function;
@@ -103,6 +113,19 @@ static NTSTATUS d9mt_new_render_pso(void *args) {
 
   p->ret_pso = (uint64_t)(uintptr_t)pso;
   p->ret_error = (uint64_t)(uintptr_t)[err retain];
+
+  } @catch (NSException *ex) {
+    NSString *msg = [NSString
+        stringWithFormat:@"d9mtmetal PSO exception: %@: %@", ex.name,
+                         ex.reason];
+    NSError *exErr = [[NSError alloc]
+        initWithDomain:@"d9mtmetal"
+                  code:1
+              userInfo:@{NSLocalizedDescriptionKey : msg}];
+    p->ret_pso = 0;
+    p->ret_error = (uint64_t)(uintptr_t)exErr;
+  }
+  [pool release];
   return STATUS_SUCCESS;
 }
 

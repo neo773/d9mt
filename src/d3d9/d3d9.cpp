@@ -13,8 +13,13 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
+#include <deque>
+#include <string>
+#include <vector>
 
 #include "../winemetal.h"
+#include "../d9mtmetal/d9mtmetal.h"
+#include "d9mt_translate.h"
 #include "shader_metallib.h"
 
 // ---------------------------------------------------------------------------
@@ -60,6 +65,317 @@ static void log_nserror(const char *what, obj_handle_t err) {
       log_msg("stub: %s", name);                                               \
     }                                                                          \
   } while (0)
+
+// ---------------------------------------------------------------------------
+// shader path plumbing
+// ---------------------------------------------------------------------------
+
+// Metal buffer index plan (vertex stage): the generated shaders own the low
+// indices ([[buffer(0)]] = set-0 argument buffer, [[buffer(1)]] =
+// render_state, [[buffer(2)]] = sampler heap), so vertex streams bind high.
+static constexpr uint32_t STREAM_BUFFER_BASE = 16;
+static constexpr UINT MAX_STREAMS = 8;
+static constexpr UINT RING_SIZE = 8u << 20; // per-frame upload ring
+
+// matches the render_state_t push block spirv-cross emits for the DXVK
+// dxso shaders (see build/test_*.metal); sampler words pack two u16 heap
+// indices per dword
+struct D9MTRenderStateBlock {
+  float fog_color[3];
+  float fog_scale;
+  float fog_end;
+  float fog_density;
+  uint32_t alpha_ref;
+  float point_size;
+  float point_size_min;
+  float point_size_max;
+  float point_scale_a;
+  float point_scale_b;
+  float point_scale_c;
+  uint8_t pad[12];
+  uint32_t sampler_idx[8];
+};
+static_assert(sizeof(D9MTRenderStateBlock) == 96, "render_state layout");
+
+// D3DDECLTYPE -> MTLVertexFormat raw value (0 = unsupported)
+static uint32_t decltype_to_mtl(BYTE type) {
+  switch (type) {
+  case D3DDECLTYPE_FLOAT1:    return 28; // MTLVertexFormatFloat
+  case D3DDECLTYPE_FLOAT2:    return 29;
+  case D3DDECLTYPE_FLOAT3:    return 30;
+  case D3DDECLTYPE_FLOAT4:    return 31;
+  case D3DDECLTYPE_D3DCOLOR:  return 42; // UChar4Normalized_BGRA
+  case D3DDECLTYPE_UBYTE4:    return 3;  // UChar4
+  case D3DDECLTYPE_SHORT2:    return 16; // Short2
+  case D3DDECLTYPE_SHORT4:    return 18;
+  case D3DDECLTYPE_UBYTE4N:   return 9;  // UChar4Normalized
+  case D3DDECLTYPE_SHORT2N:   return 22;
+  case D3DDECLTYPE_SHORT4N:   return 24;
+  case D3DDECLTYPE_USHORT2N:  return 19;
+  case D3DDECLTYPE_USHORT4N:  return 21;
+  case D3DDECLTYPE_FLOAT16_2: return 25; // Half2
+  case D3DDECLTYPE_FLOAT16_4: return 27;
+  default:                    return 0;
+  }
+}
+
+class D9MTDevice;
+
+class D9MTVertexDeclaration final : public IDirect3DVertexDeclaration9 {
+public:
+  D9MTVertexDeclaration(IDirect3DDevice9 *dev,
+                        const D3DVERTEXELEMENT9 *elems)
+      : m_device(dev) {
+    for (const D3DVERTEXELEMENT9 *e = elems; e->Stream != 0xFF; e++)
+      m_elements.push_back(*e);
+  }
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+    if (!ppv)
+      return E_POINTER;
+    if (riid == IID_IUnknown || riid == IID_IDirect3DVertexDeclaration9) {
+      *ppv = this;
+      AddRef();
+      return S_OK;
+    }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return InterlockedIncrement(&m_refcount);
+  }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG r = InterlockedDecrement(&m_refcount);
+    if (!r)
+      delete this;
+    return r;
+  }
+  HRESULT STDMETHODCALLTYPE GetDevice(IDirect3DDevice9 **ppDevice) override {
+    if (!ppDevice)
+      return D3DERR_INVALIDCALL;
+    m_device->AddRef();
+    *ppDevice = m_device;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetDeclaration(D3DVERTEXELEMENT9 *pElement,
+                                           UINT *pNumElements) override {
+    if (!pNumElements)
+      return D3DERR_INVALIDCALL;
+    UINT n = (UINT)m_elements.size() + 1;
+    if (pElement) {
+      memcpy(pElement, m_elements.data(),
+             m_elements.size() * sizeof(D3DVERTEXELEMENT9));
+      static const D3DVERTEXELEMENT9 end = D3DDECL_END();
+      pElement[m_elements.size()] = end;
+    }
+    *pNumElements = n;
+    return D3D_OK;
+  }
+
+  std::vector<D3DVERTEXELEMENT9> m_elements;
+
+private:
+  volatile LONG m_refcount = 1;
+  IDirect3DDevice9 *m_device;
+};
+
+// shared MTLBuffer-backed memory for VB/IB (host-visible, page-aligned for
+// newBufferWithBytesNoCopy)
+struct D9MTBufferStorage {
+  void *mem = nullptr;
+  obj_handle_t buf = 0;
+  uint64_t gpuAddr = 0;
+  UINT size = 0;
+
+  bool alloc(obj_handle_t device, UINT length) {
+    size = (length + 0xFFFF) & ~0xFFFFu; // VirtualAlloc granularity
+    mem = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE,
+                       PAGE_READWRITE);
+    if (!mem)
+      return false;
+    WMTBufferInfo info = {};
+    info.length = size;
+    info.options = WMTResourceStorageModeShared;
+    info.memory.set(mem);
+    buf = MTLDevice_newBuffer(device, &info);
+    gpuAddr = info.gpu_address;
+    return buf != 0;
+  }
+  void free() {
+    if (buf)
+      NSObject_release(buf);
+    if (mem)
+      VirtualFree(mem, 0, MEM_RELEASE);
+    buf = 0;
+    mem = nullptr;
+  }
+};
+
+template <typename Iface, D3DRESOURCETYPE RType>
+class D9MTBufferBase : public Iface {
+public:
+  D9MTBufferBase(IDirect3DDevice9 *dev) : m_device(dev) {}
+  virtual ~D9MTBufferBase() { m_storage.free(); }
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+    if (!ppv)
+      return E_POINTER;
+    *ppv = this;
+    this->AddRef();
+    return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return InterlockedIncrement(&m_refcount);
+  }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG r = InterlockedDecrement(&m_refcount);
+    if (!r)
+      delete this;
+    return r;
+  }
+  HRESULT STDMETHODCALLTYPE GetDevice(IDirect3DDevice9 **ppDevice) override {
+    if (!ppDevice)
+      return D3DERR_INVALIDCALL;
+    m_device->AddRef();
+    *ppDevice = m_device;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, const void *, DWORD,
+                                           DWORD) override {
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, void *,
+                                           DWORD *) override {
+    return D3DERR_NOTFOUND;
+  }
+  HRESULT STDMETHODCALLTYPE FreePrivateData(REFGUID) override {
+    return D3D_OK;
+  }
+  DWORD STDMETHODCALLTYPE SetPriority(DWORD) override { return 0; }
+  DWORD STDMETHODCALLTYPE GetPriority() override { return 0; }
+  void STDMETHODCALLTYPE PreLoad() override {}
+  D3DRESOURCETYPE STDMETHODCALLTYPE GetType() override { return RType; }
+
+  HRESULT STDMETHODCALLTYPE Lock(UINT OffsetToLock, UINT SizeToLock,
+                                 void **ppbData, DWORD Flags) override {
+    if (!ppbData || OffsetToLock >= m_length)
+      return D3DERR_INVALIDCALL;
+    *ppbData = (uint8_t *)m_storage.mem + OffsetToLock;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE Unlock() override { return D3D_OK; }
+
+  D9MTBufferStorage m_storage;
+  UINT m_length = 0;
+
+protected:
+  volatile LONG m_refcount = 1;
+  IDirect3DDevice9 *m_device;
+};
+
+class D9MTVertexBuffer final
+    : public D9MTBufferBase<IDirect3DVertexBuffer9, D3DRTYPE_VERTEXBUFFER> {
+public:
+  using D9MTBufferBase::D9MTBufferBase;
+  HRESULT STDMETHODCALLTYPE GetDesc(D3DVERTEXBUFFER_DESC *pDesc) override {
+    if (!pDesc)
+      return D3DERR_INVALIDCALL;
+    pDesc->Format = D3DFMT_VERTEXDATA;
+    pDesc->Type = D3DRTYPE_VERTEXBUFFER;
+    pDesc->Usage = m_usage;
+    pDesc->Pool = D3DPOOL_DEFAULT;
+    pDesc->Size = m_length;
+    pDesc->FVF = m_fvf;
+    return D3D_OK;
+  }
+  DWORD m_usage = 0;
+  DWORD m_fvf = 0;
+};
+
+class D9MTIndexBuffer final
+    : public D9MTBufferBase<IDirect3DIndexBuffer9, D3DRTYPE_INDEXBUFFER> {
+public:
+  using D9MTBufferBase::D9MTBufferBase;
+  HRESULT STDMETHODCALLTYPE GetDesc(D3DINDEXBUFFER_DESC *pDesc) override {
+    if (!pDesc)
+      return D3DERR_INVALIDCALL;
+    pDesc->Format = m_format;
+    pDesc->Type = D3DRTYPE_INDEXBUFFER;
+    pDesc->Usage = m_usage;
+    pDesc->Pool = D3DPOOL_DEFAULT;
+    pDesc->Size = m_length;
+    return D3D_OK;
+  }
+  DWORD m_usage = 0;
+  D3DFORMAT m_format = D3DFMT_INDEX16;
+};
+
+// translated + Metal-compiled shader (shared shape between VS and PS)
+struct D9MTShaderData {
+  D9MTShaderInfo info;
+  obj_handle_t library = 0;  // retained, from d9mtmetal newLibraryWithSource
+  obj_handle_t function = 0; // retained MTLFunction "main0"
+  std::vector<DWORD> bytecode;
+
+  void destroy() {
+    if (function)
+      NSObject_release(function);
+    if (library)
+      NSObject_release(library);
+    function = 0;
+    library = 0;
+  }
+};
+
+template <typename Iface>
+class D9MTShaderBase : public Iface {
+public:
+  D9MTShaderBase(IDirect3DDevice9 *dev) : m_device(dev) {}
+  virtual ~D9MTShaderBase() { m_data.destroy(); }
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+    if (!ppv)
+      return E_POINTER;
+    *ppv = this;
+    this->AddRef();
+    return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return InterlockedIncrement(&m_refcount);
+  }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG r = InterlockedDecrement(&m_refcount);
+    if (!r)
+      delete this;
+    return r;
+  }
+  HRESULT STDMETHODCALLTYPE GetDevice(IDirect3DDevice9 **ppDevice) override {
+    if (!ppDevice)
+      return D3DERR_INVALIDCALL;
+    m_device->AddRef();
+    *ppDevice = m_device;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetFunction(void *pData,
+                                        UINT *pSizeOfData) override {
+    if (!pSizeOfData)
+      return D3DERR_INVALIDCALL;
+    UINT size = (UINT)(m_data.bytecode.size() * sizeof(DWORD));
+    if (pData)
+      memcpy(pData, m_data.bytecode.data(), size);
+    *pSizeOfData = size;
+    return D3D_OK;
+  }
+
+  D9MTShaderData m_data;
+
+private:
+  volatile LONG m_refcount = 1;
+  IDirect3DDevice9 *m_device;
+};
+
+using D9MTVertexShader = D9MTShaderBase<IDirect3DVertexShader9>;
+using D9MTPixelShader = D9MTShaderBase<IDirect3DPixelShader9>;
 
 // ---------------------------------------------------------------------------
 // device
@@ -205,14 +521,36 @@ public:
   HRESULT STDMETHODCALLTYPE CreateVertexBuffer(
       UINT Length, DWORD Usage, DWORD FVF, D3DPOOL Pool,
       IDirect3DVertexBuffer9 **ppVertexBuffer, HANDLE *pSharedHandle) override {
-    STUB_ONCE("CreateVertexBuffer");
-    return D3DERR_NOTAVAILABLE;
+    if (!ppVertexBuffer || !Length)
+      return D3DERR_INVALIDCALL;
+    D9MTVertexBuffer *vb = new D9MTVertexBuffer(this);
+    vb->m_length = Length;
+    vb->m_usage = Usage;
+    vb->m_fvf = FVF;
+    if (!vb->m_storage.alloc(m_mtlDevice, Length)) {
+      vb->Release();
+      return D3DERR_OUTOFVIDEOMEMORY;
+    }
+    *ppVertexBuffer = vb;
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE CreateIndexBuffer(
       UINT Length, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool,
       IDirect3DIndexBuffer9 **ppIndexBuffer, HANDLE *pSharedHandle) override {
-    STUB_ONCE("CreateIndexBuffer");
-    return D3DERR_NOTAVAILABLE;
+    if (!ppIndexBuffer || !Length)
+      return D3DERR_INVALIDCALL;
+    if (Format != D3DFMT_INDEX16 && Format != D3DFMT_INDEX32)
+      return D3DERR_INVALIDCALL;
+    D9MTIndexBuffer *ib = new D9MTIndexBuffer(this);
+    ib->m_length = Length;
+    ib->m_usage = Usage;
+    ib->m_format = Format;
+    if (!ib->m_storage.alloc(m_mtlDevice, Length)) {
+      ib->Release();
+      return D3DERR_OUTOFVIDEOMEMORY;
+    }
+    *ppIndexBuffer = ib;
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE CreateRenderTarget(
       UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MS,
@@ -480,16 +818,10 @@ public:
   // draws
   HRESULT STDMETHODCALLTYPE DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType,
                                           UINT StartVertex,
-                                          UINT PrimitiveCount) override {
-    STUB_ONCE("DrawPrimitive");
-    return D3D_OK;
-  }
+                                          UINT PrimitiveCount) override;
   HRESULT STDMETHODCALLTYPE DrawIndexedPrimitive(
       D3DPRIMITIVETYPE PrimitiveType, INT BaseVertexIndex, UINT MinVertexIndex,
-      UINT NumVertices, UINT startIndex, UINT primCount) override {
-    STUB_ONCE("DrawIndexedPrimitive");
-    return D3D_OK;
-  }
+      UINT NumVertices, UINT startIndex, UINT primCount) override;
   HRESULT STDMETHODCALLTYPE DrawPrimitiveUP(
       D3DPRIMITIVETYPE PrimitiveType, UINT PrimitiveCount,
       const void *pVertexStreamZeroData, UINT VertexStreamZeroStride) override;
@@ -510,17 +842,23 @@ public:
   HRESULT STDMETHODCALLTYPE CreateVertexDeclaration(
       const D3DVERTEXELEMENT9 *pVertexElements,
       IDirect3DVertexDeclaration9 **ppDecl) override {
-    STUB_ONCE("CreateVertexDeclaration");
-    return D3DERR_NOTAVAILABLE;
+    if (!pVertexElements || !ppDecl)
+      return D3DERR_INVALIDCALL;
+    *ppDecl = new D9MTVertexDeclaration(this, pVertexElements);
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   SetVertexDeclaration(IDirect3DVertexDeclaration9 *pDecl) override {
+    m_vdecl = static_cast<D9MTVertexDeclaration *>(pDecl);
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   GetVertexDeclaration(IDirect3DVertexDeclaration9 **ppDecl) override {
-    if (ppDecl)
-      *ppDecl = nullptr;
+    if (!ppDecl)
+      return D3DERR_INVALIDCALL;
+    if (m_vdecl)
+      m_vdecl->AddRef();
+    *ppDecl = m_vdecl;
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE SetFVF(DWORD FVF) override {
@@ -535,35 +873,67 @@ public:
   HRESULT STDMETHODCALLTYPE
   CreateVertexShader(const DWORD *pFunction,
                      IDirect3DVertexShader9 **ppShader) override {
-    STUB_ONCE("CreateVertexShader");
-    return D3DERR_NOTAVAILABLE;
+    if (!pFunction || !ppShader)
+      return D3DERR_INVALIDCALL;
+    D9MTVertexShader *sh = new D9MTVertexShader(this);
+    HRESULT hr = CompileShader(pFunction, sh->m_data);
+    if (FAILED(hr)) {
+      sh->Release();
+      return hr;
+    }
+    if (!sh->m_data.info.isVertexShader) {
+      sh->Release();
+      return D3DERR_INVALIDCALL;
+    }
+    *ppShader = sh;
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   SetVertexShader(IDirect3DVertexShader9 *pShader) override {
+    m_vs = static_cast<D9MTVertexShader *>(pShader);
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   GetVertexShader(IDirect3DVertexShader9 **ppShader) override {
-    if (ppShader)
-      *ppShader = nullptr;
+    if (!ppShader)
+      return D3DERR_INVALIDCALL;
+    if (m_vs)
+      m_vs->AddRef();
+    *ppShader = m_vs;
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE SetVertexShaderConstantF(
       UINT StartRegister, const float *pConstantData,
       UINT Vector4fCount) override {
+    if (!pConstantData || StartRegister + Vector4fCount > 256)
+      return D3DERR_INVALIDCALL;
+    memcpy(m_vsConstF[StartRegister], pConstantData,
+           Vector4fCount * 4 * sizeof(float));
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE GetVertexShaderConstantF(
       UINT StartRegister, float *pConstantData, UINT Vector4fCount) override {
+    if (!pConstantData || StartRegister + Vector4fCount > 256)
+      return D3DERR_INVALIDCALL;
+    memcpy(pConstantData, m_vsConstF[StartRegister],
+           Vector4fCount * 4 * sizeof(float));
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE SetVertexShaderConstantI(
       UINT StartRegister, const int *pConstantData,
       UINT Vector4iCount) override {
+    if (!pConstantData || StartRegister + Vector4iCount > 16)
+      return D3DERR_INVALIDCALL;
+    memcpy(m_vsConstI[StartRegister], pConstantData,
+           Vector4iCount * 4 * sizeof(int));
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE GetVertexShaderConstantI(
       UINT StartRegister, int *pConstantData, UINT Vector4iCount) override {
+    if (!pConstantData || StartRegister + Vector4iCount > 16)
+      return D3DERR_INVALIDCALL;
+    memcpy(pConstantData, m_vsConstI[StartRegister],
+           Vector4iCount * 4 * sizeof(int));
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE SetVertexShaderConstantB(
@@ -577,13 +947,25 @@ public:
   HRESULT STDMETHODCALLTYPE
   SetStreamSource(UINT StreamNumber, IDirect3DVertexBuffer9 *pStreamData,
                   UINT OffsetInBytes, UINT Stride) override {
+    if (StreamNumber >= MAX_STREAMS)
+      return D3DERR_INVALIDCALL;
+    m_streams[StreamNumber].vb = static_cast<D9MTVertexBuffer *>(pStreamData);
+    m_streams[StreamNumber].offset = OffsetInBytes;
+    m_streams[StreamNumber].stride = Stride;
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   GetStreamSource(UINT StreamNumber, IDirect3DVertexBuffer9 **ppStreamData,
                   UINT *pOffsetInBytes, UINT *pStride) override {
-    if (ppStreamData)
-      *ppStreamData = nullptr;
+    if (StreamNumber >= MAX_STREAMS || !ppStreamData)
+      return D3DERR_INVALIDCALL;
+    if (m_streams[StreamNumber].vb)
+      m_streams[StreamNumber].vb->AddRef();
+    *ppStreamData = m_streams[StreamNumber].vb;
+    if (pOffsetInBytes)
+      *pOffsetInBytes = m_streams[StreamNumber].offset;
+    if (pStride)
+      *pStride = m_streams[StreamNumber].stride;
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE SetStreamSourceFreq(UINT StreamNumber,
@@ -598,46 +980,82 @@ public:
   }
   HRESULT STDMETHODCALLTYPE
   SetIndices(IDirect3DIndexBuffer9 *pIndexData) override {
+    m_indices = static_cast<D9MTIndexBuffer *>(pIndexData);
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   GetIndices(IDirect3DIndexBuffer9 **ppIndexData) override {
-    if (ppIndexData)
-      *ppIndexData = nullptr;
+    if (!ppIndexData)
+      return D3DERR_INVALIDCALL;
+    if (m_indices)
+      m_indices->AddRef();
+    *ppIndexData = m_indices;
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   CreatePixelShader(const DWORD *pFunction,
                     IDirect3DPixelShader9 **ppShader) override {
-    STUB_ONCE("CreatePixelShader");
-    return D3DERR_NOTAVAILABLE;
+    if (!pFunction || !ppShader)
+      return D3DERR_INVALIDCALL;
+    D9MTPixelShader *sh = new D9MTPixelShader(this);
+    HRESULT hr = CompileShader(pFunction, sh->m_data);
+    if (FAILED(hr)) {
+      sh->Release();
+      return hr;
+    }
+    if (sh->m_data.info.isVertexShader) {
+      sh->Release();
+      return D3DERR_INVALIDCALL;
+    }
+    *ppShader = sh;
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   SetPixelShader(IDirect3DPixelShader9 *pShader) override {
+    m_ps = static_cast<D9MTPixelShader *>(pShader);
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   GetPixelShader(IDirect3DPixelShader9 **ppShader) override {
-    if (ppShader)
-      *ppShader = nullptr;
+    if (!ppShader)
+      return D3DERR_INVALIDCALL;
+    if (m_ps)
+      m_ps->AddRef();
+    *ppShader = m_ps;
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE SetPixelShaderConstantF(
       UINT StartRegister, const float *pConstantData,
       UINT Vector4fCount) override {
+    if (!pConstantData || StartRegister + Vector4fCount > 224)
+      return D3DERR_INVALIDCALL;
+    memcpy(m_psConstF[StartRegister], pConstantData,
+           Vector4fCount * 4 * sizeof(float));
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE GetPixelShaderConstantF(
       UINT StartRegister, float *pConstantData, UINT Vector4fCount) override {
+    if (!pConstantData || StartRegister + Vector4fCount > 224)
+      return D3DERR_INVALIDCALL;
+    memcpy(pConstantData, m_psConstF[StartRegister],
+           Vector4fCount * 4 * sizeof(float));
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE SetPixelShaderConstantI(
       UINT StartRegister, const int *pConstantData,
       UINT Vector4iCount) override {
+    if (!pConstantData || StartRegister + Vector4iCount > 16)
+      return D3DERR_INVALIDCALL;
+    memcpy(m_psConstI[StartRegister], pConstantData,
+           Vector4iCount * 4 * sizeof(int));
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE GetPixelShaderConstantI(
       UINT StartRegister, int *pConstantData, UINT Vector4iCount) override {
+    if (!pConstantData || StartRegister + Vector4iCount > 16)
+      return D3DERR_INVALIDCALL;
+    memcpy(pConstantData, m_psConstI[StartRegister],
+           Vector4iCount * 4 * sizeof(int));
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE SetPixelShaderConstantB(
@@ -689,6 +1107,78 @@ private:
   UINT m_vertexCount = 0;
   D3DCOLOR m_clearColor = 0xFF000000;
   bool m_clearPending = true;
+
+  // --- programmable pipeline state ---
+  D9MTVertexShader *m_vs = nullptr;
+  D9MTPixelShader *m_ps = nullptr;
+  D9MTVertexDeclaration *m_vdecl = nullptr;
+  struct StreamSource {
+    D9MTVertexBuffer *vb = nullptr;
+    UINT offset = 0;
+    UINT stride = 0;
+  } m_streams[MAX_STREAMS];
+  D9MTIndexBuffer *m_indices = nullptr;
+
+  // shader constants (HWVP layout: i[16] then f[N] in the cbuffer)
+  float m_vsConstF[256][4] = {};
+  int m_vsConstI[16][4] = {};
+  float m_psConstF[224][4] = {};
+  int m_psConstI[16][4] = {};
+
+  // per-frame upload ring (cbuffers, argument buffers, render_state)
+  D9MTBufferStorage m_ring;
+  UINT m_ringOffset = 0;
+  UINT m_ringStaticEnd = 0; // static allocations live below this watermark
+  UINT m_specStateOffset = 0; // zeroed spec dwords + alpha-func ALWAYS
+  UINT m_clipInfoOffset = 0;  // 6 zeroed clip planes
+
+  // recorded render commands for this frame (deque: stable addresses)
+  struct CmdSlot {
+    alignas(16) uint8_t raw[64];
+  };
+  std::deque<CmdSlot> m_cmds;
+  wmtcmd_base *m_cmdHead = nullptr;
+  wmtcmd_base *m_cmdTail = nullptr;
+  bool m_ringResident = false; // UseResource emitted this frame
+  obj_handle_t m_lastPso = 0;  // dedupe SetPSO commands
+
+  // PSO cache for the programmable path
+  struct PsoKey {
+    void *vs;
+    void *ps;
+    void *decl;
+  };
+  std::vector<std::pair<PsoKey, obj_handle_t>> m_psoCache;
+
+  template <typename T> T *AppendCmd(uint16_t type) {
+    m_cmds.emplace_back();
+    T *c = reinterpret_cast<T *>(m_cmds.back().raw);
+    static_assert(sizeof(T) <= sizeof(CmdSlot), "cmd slot too small");
+    memset(c, 0, sizeof(T));
+    memcpy(c, &type, sizeof(type));
+    if (m_cmdTail)
+      m_cmdTail->next.set(c);
+    else
+      m_cmdHead = reinterpret_cast<wmtcmd_base *>(c);
+    m_cmdTail = reinterpret_cast<wmtcmd_base *>(c);
+    return c;
+  }
+
+  // bump-allocate from the upload ring; returns host pointer, fills offset
+  void *RingAlloc(UINT size, UINT *outOffset) {
+    UINT aligned = (m_ringOffset + 255u) & ~255u;
+    if (aligned + size > RING_SIZE) {
+      log_msg("RingAlloc: ring exhausted (%u + %u)", aligned, size);
+      return nullptr;
+    }
+    *outOffset = aligned;
+    m_ringOffset = aligned + size;
+    return (uint8_t *)m_ring.mem + aligned;
+  }
+
+  HRESULT CompileShader(const DWORD *pFunction, D9MTShaderData &data);
+  obj_handle_t GetOrCreatePso();
+  bool PrepareDraw();
 };
 
 HRESULT D9MTDevice::Init() {
@@ -801,12 +1291,36 @@ HRESULT D9MTDevice::Init() {
     return D3DERR_NOTAVAILABLE;
   }
 
+  // upload ring for the programmable path (cbuffers, argument buffers,
+  // render_state), plus static blocks the generated shaders always expect
+  if (!m_ring.alloc(m_mtlDevice, RING_SIZE)) {
+    log_msg("Init: ring alloc failed");
+    NSObject_release(pool);
+    return D3DERR_NOTAVAILABLE;
+  }
+  {
+    // spec_state: 15 dwords; without function constants the shaders read
+    // spec data from this buffer. All-zero except the alpha compare op,
+    // which must be ALWAYS (7, dword1 bits [21:24)) or every fragment
+    // gets discarded by the alpha-test epilogue.
+    uint32_t *spec = (uint32_t *)RingAlloc(64, &m_specStateOffset);
+    memset(spec, 0, 64);
+    spec[1] = 7u << 21;
+    // clip_info: 6 zeroed user clip planes
+    float *clip = (float *)RingAlloc(6 * 16, &m_clipInfoOffset);
+    memset(clip, 0, 6 * 16);
+    m_ringStaticEnd = m_ringOffset;
+  }
+
   NSObject_release(pool);
   log_msg("Init: OK");
   return D3D_OK;
 }
 
 D9MTDevice::~D9MTDevice() {
+  for (auto &e : m_psoCache)
+    NSObject_release(e.second);
+  m_ring.free();
   if (m_vbuf)
     NSObject_release(m_vbuf);
   if (m_vbufMem)
@@ -857,6 +1371,361 @@ HRESULT D9MTDevice::DrawPrimitiveUP(D3DPRIMITIVETYPE PrimitiveType,
   return D3D_OK;
 }
 
+// ---------------------------------------------------------------------------
+// programmable pipeline
+// ---------------------------------------------------------------------------
+
+HRESULT D9MTDevice::CompileShader(const DWORD *pFunction,
+                                  D9MTShaderData &data) {
+  // measure the bytecode: END token (0x0000FFFF) terminates the stream;
+  // comment blocks (opcode 0xFFFE, dword length in [30:16]) may contain
+  // arbitrary data (CTAB) and must be skipped, not scanned
+  const DWORD *p = pFunction + 1; // skip version token
+  while (*p != 0x0000FFFFu) {
+    if ((*p & 0xFFFFu) == 0xFFFEu)
+      p += ((*p >> 16) & 0x7FFFu) + 1;
+    else
+      p++;
+  }
+  size_t dwords = (size_t)(p - pFunction) + 1;
+  data.bytecode.assign(pFunction, pFunction + dwords);
+
+  std::string err;
+  if (!d9mt_translate(data.bytecode.data(), data.info, err)) {
+    log_msg("CompileShader: translation failed: %s", err.c_str());
+    return D3DERR_INVALIDCALL;
+  }
+
+  struct d9mt_newlibrary_params lp;
+  memset(&lp, 0, sizeof(lp));
+  lp.device = m_mtlDevice;
+  lp.source_ptr = (uint64_t)(uintptr_t)data.info.msl.data();
+  lp.source_len = data.info.msl.size();
+  lp.fast_math = 1;
+  int st = D9MT_UnixCall(D9MT_FUNC_NEW_LIBRARY_FROM_SOURCE, &lp);
+  if (st != 0 || !lp.ret_library) {
+    log_msg("CompileShader: newLibraryWithSource status %d", st);
+    if (lp.ret_error)
+      log_nserror("CompileShader: MSL compile", lp.ret_error);
+    return D3DERR_INVALIDCALL;
+  }
+  data.library = lp.ret_library;
+  if (lp.ret_error)
+    NSObject_release(lp.ret_error); // compile warnings
+
+  // supply ALL function constants (PSO creation crashes on unspecialized
+  // functions); values are the dxso spec-constant defaults
+  const auto &scs = data.info.specConstants;
+  if (!scs.empty()) {
+    std::vector<uint32_t> values(scs.size());
+    std::vector<WMTFunctionConstant> consts(scs.size());
+    for (size_t i = 0; i < scs.size(); i++) {
+      values[i] = scs[i].second;
+      memset(&consts[i], 0, sizeof(consts[i]));
+      consts[i].data.set(&values[i]);
+      consts[i].type = WMTDataTypeUInt;
+      consts[i].index = (uint16_t)scs[i].first;
+    }
+    obj_handle_t fnErr = 0;
+    data.function = MTLLibrary_newFunctionWithConstants(
+        data.library, "main0", consts.data(), (uint32_t)consts.size(),
+        &fnErr);
+    if (!data.function) {
+      log_nserror("CompileShader: newFunctionWithConstants", fnErr);
+      return D3DERR_INVALIDCALL;
+    }
+    if (fnErr)
+      NSObject_release(fnErr);
+  } else {
+    data.function = MTLLibrary_newFunction(data.library, "main0");
+  }
+  if (!data.function) {
+    log_msg("CompileShader: main0 not found in compiled library");
+    return D3DERR_INVALIDCALL;
+  }
+
+  log_msg("CompileShader: %s ok (%zu dwords, %zu bytes MSL, ab=%u rs=%d "
+          "heap=%d)",
+          data.info.isVertexShader ? "vs" : "ps", dwords,
+          data.info.msl.size(), data.info.abEntryCount,
+          data.info.rsBufferIndex, data.info.samplerHeapIndex);
+  return D3D_OK;
+}
+
+obj_handle_t D9MTDevice::GetOrCreatePso() {
+  PsoKey key{m_vs, m_ps, m_vdecl};
+  for (auto &e : m_psoCache)
+    if (e.first.vs == key.vs && e.first.ps == key.ps &&
+        e.first.decl == key.decl)
+      return e.second;
+
+  struct d9mt_pso_info info;
+  memset(&info, 0, sizeof(info));
+  info.vertex_function = m_vs->m_data.function;
+  info.fragment_function = m_ps->m_data.function;
+  info.colors[0].pixel_format = WMTPixelFormatBGRA8Unorm;
+  info.colors[0].write_mask = 0xF; // MTLColorWriteMaskAll
+  info.raster_sample_count = 1;
+
+  bool streamUsed[MAX_STREAMS] = {};
+  uint32_t na = 0;
+  for (const auto &in : m_vs->m_data.info.inputs) {
+    const D3DVERTEXELEMENT9 *match = nullptr;
+    for (const auto &e : m_vdecl->m_elements)
+      if (e.Usage == in.usage && e.UsageIndex == in.usageIndex) {
+        match = &e;
+        break;
+      }
+    if (!match) {
+      log_msg("PSO: vertex decl has no element for shader input usage=%u "
+              "index=%u",
+              in.usage, in.usageIndex);
+      return 0;
+    }
+    uint32_t fmt = decltype_to_mtl(match->Type);
+    if (!fmt || match->Stream >= MAX_STREAMS) {
+      log_msg("PSO: unsupported decl type %u / stream %u", match->Type,
+              match->Stream);
+      return 0;
+    }
+    info.attributes[na].format = fmt;
+    info.attributes[na].offset = match->Offset;
+    info.attributes[na].buffer_index = STREAM_BUFFER_BASE + match->Stream;
+    info.attributes[na].location = in.location;
+    na++;
+    streamUsed[match->Stream] = true;
+  }
+  info.num_attributes = na;
+
+  uint32_t nl = 0;
+  for (UINT s = 0; s < MAX_STREAMS; s++) {
+    if (!streamUsed[s])
+      continue;
+    if (!m_streams[s].vb || !m_streams[s].stride) {
+      log_msg("PSO: stream %u referenced by decl but not bound", s);
+      return 0;
+    }
+    info.layouts[nl].buffer_index = STREAM_BUFFER_BASE + s;
+    info.layouts[nl].stride = m_streams[s].stride;
+    info.layouts[nl].step_function = 1; // MTLVertexStepFunctionPerVertex
+    info.layouts[nl].step_rate = 1;
+    nl++;
+  }
+  info.num_layouts = nl;
+
+  struct d9mt_newpso_params pp;
+  memset(&pp, 0, sizeof(pp));
+  pp.device = m_mtlDevice;
+  pp.info_ptr = (uint64_t)(uintptr_t)&info;
+  log_msg("PSO: creating (%u attributes, %u layouts)", na, nl);
+  int st = D9MT_UnixCall(D9MT_FUNC_NEW_RENDER_PSO, &pp);
+  if (st != 0 || !pp.ret_pso) {
+    log_msg("PSO: creation failed, status %d", st);
+    if (pp.ret_error)
+      log_nserror("PSO: newRenderPipelineState", pp.ret_error);
+    return 0;
+  }
+  if (pp.ret_error)
+    NSObject_release(pp.ret_error);
+
+  log_msg("PSO: created (%u attributes, %u layouts)", na, nl);
+  m_psoCache.push_back({key, pp.ret_pso});
+  return pp.ret_pso;
+}
+
+bool D9MTDevice::PrepareDraw() {
+  if (!m_vs || !m_ps || !m_vdecl) {
+    STUB_ONCE("draw without vs/ps/vertex declaration (FF draw path)");
+    return false;
+  }
+  obj_handle_t pso = GetOrCreatePso();
+  if (!pso)
+    return false;
+
+  // everything the argument buffers point at lives in the ring; make it
+  // resident once per frame
+  if (!m_ringResident) {
+    auto *use =
+        AppendCmd<wmtcmd_render_useresource>(WMTRenderCommandUseResource);
+    use->resource = m_ring.buf;
+    use->usage = WMTResourceUsageRead;
+    use->stages =
+        (WMTRenderStages)(WMTRenderStageVertex | WMTRenderStageFragment);
+    m_ringResident = true;
+  }
+
+  if (pso != m_lastPso) {
+    auto *sp = AppendCmd<wmtcmd_render_setpso>(WMTRenderCommandSetPSO);
+    sp->pso = pso;
+    m_lastPso = pso;
+  }
+
+  // render_state push block, shared by both stages
+  UINT rsOff = 0;
+  auto *rs = (D9MTRenderStateBlock *)RingAlloc(sizeof(D9MTRenderStateBlock),
+                                               &rsOff);
+  if (!rs)
+    return false;
+  memset(rs, 0, sizeof(*rs));
+  rs->point_size = 1.0f;
+  rs->point_size_min = 1.0f;
+  rs->point_size_max = 64.0f;
+  // sampler heap index == D3D9 sampler slot; two u16 indices per dword
+  for (uint32_t k = 0; k < 8; k++)
+    rs->sampler_idx[k] = ((2 * k + 1) << 16) | (2 * k);
+
+  for (int stage = 0; stage < 2; stage++) {
+    const D9MTShaderData &sh = stage ? m_ps->m_data : m_vs->m_data;
+    const D9MTShaderInfo &si = sh.info;
+
+    UINT cbOff = 0;
+    if (si.idCbuffer >= 0) {
+      UINT cbSize = 16 * 16 + si.floatConstCount * 16;
+      uint8_t *cb = (uint8_t *)RingAlloc(cbSize, &cbOff);
+      if (!cb)
+        return false;
+      if (stage) {
+        memcpy(cb, m_psConstI, sizeof(m_psConstI));
+        memcpy(cb + sizeof(m_psConstI), m_psConstF, si.floatConstCount * 16);
+      } else {
+        memcpy(cb, m_vsConstI, sizeof(m_vsConstI));
+        memcpy(cb + sizeof(m_vsConstI), m_vsConstF, si.floatConstCount * 16);
+      }
+    }
+
+    if (si.abEntryCount) {
+      UINT abOff = 0;
+      uint64_t *ab = (uint64_t *)RingAlloc(si.abEntryCount * 8, &abOff);
+      if (!ab)
+        return false;
+      memset(ab, 0, si.abEntryCount * 8);
+      if (si.idCbuffer >= 0)
+        ab[si.idCbuffer] = m_ring.gpuAddr + cbOff;
+      if (si.idClipInfo >= 0)
+        ab[si.idClipInfo] = m_ring.gpuAddr + m_clipInfoOffset;
+      if (si.idSpecState >= 0)
+        ab[si.idSpecState] = m_ring.gpuAddr + m_specStateOffset;
+      // textures stay 0 until SetTexture support lands
+
+      auto *sb = AppendCmd<wmtcmd_render_setbuffer>(
+          stage ? WMTRenderCommandSetFragmentBuffer
+                : WMTRenderCommandSetVertexBuffer);
+      sb->buffer = m_ring.buf;
+      sb->offset = abOff;
+      sb->index = 0;
+    }
+
+    if (si.rsBufferIndex >= 0) {
+      auto *sb = AppendCmd<wmtcmd_render_setbuffer>(
+          stage ? WMTRenderCommandSetFragmentBuffer
+                : WMTRenderCommandSetVertexBuffer);
+      sb->buffer = m_ring.buf;
+      sb->offset = rsOff;
+      sb->index = (uint8_t)si.rsBufferIndex;
+    }
+
+    if (stage && si.samplerHeapIndex >= 0) {
+      // no samplers yet: bind a zeroed heap so the shader has something
+      UINT heapOff = 0;
+      void *heap = RingAlloc(32 * 8, &heapOff);
+      if (!heap)
+        return false;
+      memset(heap, 0, 32 * 8);
+      auto *sb = AppendCmd<wmtcmd_render_setbuffer>(
+          WMTRenderCommandSetFragmentBuffer);
+      sb->buffer = m_ring.buf;
+      sb->offset = heapOff;
+      sb->index = (uint8_t)si.samplerHeapIndex;
+    }
+  }
+
+  // vertex streams
+  for (UINT s = 0; s < MAX_STREAMS; s++) {
+    if (!m_streams[s].vb)
+      continue;
+    auto *sb =
+        AppendCmd<wmtcmd_render_setbuffer>(WMTRenderCommandSetVertexBuffer);
+    sb->buffer = m_streams[s].vb->m_storage.buf;
+    sb->offset = m_streams[s].offset;
+    sb->index = (uint8_t)(STREAM_BUFFER_BASE + s);
+  }
+  return true;
+}
+
+static bool prim_to_mtl(D3DPRIMITIVETYPE t, UINT primCount,
+                        WMTPrimitiveType *outType, uint64_t *outCount) {
+  switch (t) {
+  case D3DPT_POINTLIST:
+    *outType = WMTPrimitiveTypePoint;
+    *outCount = primCount;
+    return true;
+  case D3DPT_LINELIST:
+    *outType = WMTPrimitiveTypeLine;
+    *outCount = (uint64_t)primCount * 2;
+    return true;
+  case D3DPT_LINESTRIP:
+    *outType = WMTPrimitiveTypeLineStrip;
+    *outCount = (uint64_t)primCount + 1;
+    return true;
+  case D3DPT_TRIANGLELIST:
+    *outType = WMTPrimitiveTypeTriangle;
+    *outCount = (uint64_t)primCount * 3;
+    return true;
+  case D3DPT_TRIANGLESTRIP:
+    *outType = WMTPrimitiveTypeTriangleStrip;
+    *outCount = (uint64_t)primCount + 2;
+    return true;
+  default:
+    return false; // triangle fans need emulation
+  }
+}
+
+HRESULT D9MTDevice::DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType,
+                                  UINT StartVertex, UINT PrimitiveCount) {
+  WMTPrimitiveType pt;
+  uint64_t count;
+  if (!prim_to_mtl(PrimitiveType, PrimitiveCount, &pt, &count)) {
+    STUB_ONCE("DrawPrimitive: unsupported primitive type");
+    return D3D_OK;
+  }
+  if (!PrepareDraw())
+    return D3D_OK;
+  auto *d = AppendCmd<wmtcmd_render_draw>(WMTRenderCommandDraw);
+  d->primitive_type = pt;
+  d->vertex_start = StartVertex;
+  d->vertex_count = count;
+  d->instance_count = 1;
+  return D3D_OK;
+}
+
+HRESULT D9MTDevice::DrawIndexedPrimitive(D3DPRIMITIVETYPE PrimitiveType,
+                                         INT BaseVertexIndex,
+                                         UINT MinVertexIndex,
+                                         UINT NumVertices, UINT startIndex,
+                                         UINT primCount) {
+  if (!m_indices)
+    return D3DERR_INVALIDCALL;
+  WMTPrimitiveType pt;
+  uint64_t count;
+  if (!prim_to_mtl(PrimitiveType, primCount, &pt, &count)) {
+    STUB_ONCE("DrawIndexedPrimitive: unsupported primitive type");
+    return D3D_OK;
+  }
+  if (!PrepareDraw())
+    return D3D_OK;
+  bool idx32 = m_indices->m_format == D3DFMT_INDEX32;
+  auto *d =
+      AppendCmd<wmtcmd_render_draw_indexed>(WMTRenderCommandDrawIndexed);
+  d->primitive_type = pt;
+  d->index_type = idx32 ? WMTIndexTypeUInt32 : WMTIndexTypeUInt16;
+  d->index_count = count;
+  d->index_buffer = m_indices->m_storage.buf;
+  d->index_buffer_offset = (uint64_t)startIndex * (idx32 ? 4 : 2);
+  d->instance_count = 1;
+  d->base_vertex = BaseVertexIndex;
+  return D3D_OK;
+}
+
 HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
                             HWND hDestWindowOverride,
                             const RGNDATA *pDirtyRegion) {
@@ -884,11 +1753,14 @@ HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
 
   obj_handle_t enc = MTLCommandBuffer_renderCommandEncoder(cmdbuf, &pass);
   if (enc) {
-    if (m_vertexCount) {
-      struct wmtcmd_render_setpso setPso = {};
-      struct wmtcmd_render_setbuffer setVb = {};
-      struct wmtcmd_render_draw draw = {};
+    // fixed-function UP block first (if any), then the recorded
+    // programmable-path commands chained after it
+    struct wmtcmd_render_setpso setPso = {};
+    struct wmtcmd_render_setbuffer setVb = {};
+    struct wmtcmd_render_draw draw = {};
+    const struct wmtcmd_base *head = nullptr;
 
+    if (m_vertexCount) {
       setPso.type = WMTRenderCommandSetPSO;
       setPso.next.set(&setVb);
       setPso.pso = m_pso;
@@ -900,16 +1772,20 @@ HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
       setVb.index = 0;
 
       draw.type = WMTRenderCommandDraw;
-      draw.next.set(nullptr);
+      draw.next.set(m_cmdHead);
       draw.primitive_type = WMTPrimitiveTypeTriangle;
       draw.vertex_start = 0;
       draw.vertex_count = m_vertexCount;
       draw.instance_count = 1;
       draw.base_instance = 0;
 
-      MTLRenderCommandEncoder_encodeCommands(
-          enc, (const struct wmtcmd_base *)&setPso);
+      head = (const struct wmtcmd_base *)&setPso;
+    } else {
+      head = m_cmdHead;
     }
+
+    if (head)
+      MTLRenderCommandEncoder_encodeCommands(enc, head);
     MTLCommandEncoder_endEncoding(enc);
   } else {
     log_msg("Present: renderCommandEncoder failed");
@@ -924,6 +1800,14 @@ HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
   NSObject_release(pool);
   m_vertexCount = 0;
   m_clearPending = false;
+
+  // frame done (waitUntilCompleted above): recycle command arena + ring
+  m_cmds.clear();
+  m_cmdHead = nullptr;
+  m_cmdTail = nullptr;
+  m_ringOffset = m_ringStaticEnd;
+  m_ringResident = false;
+  m_lastPso = 0;
 
   static int presented = 0;
   if (presented < 3) {
