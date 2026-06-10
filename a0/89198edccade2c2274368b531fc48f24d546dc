@@ -1,0 +1,956 @@
+vendor/dxvk/src/d3d9/d3d9_cursor.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-79
+vendor/dxvk/src/d3d9/d3d9_interfaces.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-295
+vendor/dxvk/src/util/sha1/sha1_util.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-48
+vendor/dxvk/include/native/directx/dxvahd.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-750
+vendor/dxvk/include/native/wsi/native_glfw.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-25
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.spv-amd-shader-explicit-vertex-parameter.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-14
+vendor/dxvk/include/vulkan/include/vulkan/vk_icd.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-244
+vendor/dxvk/include/native/directx/d3d9.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2229
+vendor/dxvk/include/native/directx/dxtmpl.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-882
+vendor/dxvk/include/native/directx/d3dx9core.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-507
+vendor/dxvk/src/dxbc/dxbc_common.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-72
+vendor/dxvk/src/dxbc/dxbc_options.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-73
+vendor/dxvk/src/dxso/dxso_analysis.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-41
+vendor/dxvk/include/native/directx/COPYING.MinGW-w64.txt
+  s_ef7e2ce3136a21::t_435624aaa29425 1-135
+vendor/dxvk/include/native/directx/d3dcompiler.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-163
+vendor/dxvk/src/util/util_gdi.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-32
+vendor/dxvk/src/dxbc/dxbc_chunk_shex.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-39
+vendor/dxvk/include/spirv/include/spirv/1.0/GLSL.std.450.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-131
+vendor/dxvk/src/util/com/com_object.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-123
+vendor/dxvk/src/dxbc/dxbc_module.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-135
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_h265std.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-446
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.opencl.std.100.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1279
+vendor/dxvk/include/native/directx/d3d10_1shader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-53
+vendor/dxvk/src/dxvk/dxvk_renderpass.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-58
+vendor/dxvk/src/dxso/dxso_compiler.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-726
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.nonsemantic.debugbreak.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-9
+vendor/dxvk/src/util/util_string.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-234
+vendor/dxvk/src/d3d9/d3d9_texture.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-256
+vendor/dxvk/include/spirv/include/spirv/1.2/extinst.opencl.std.100.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1279
+vendor/dxvk/src/util/util_shared_res.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-30
+vendor/dxvk/src/d3d9/d3d9_resource.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-106
+vendor/dxvk/src/util/util_vector.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-168
+vendor/dxvk/src/wsi/sdl3/wsi_monitor_sdl3.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-157
+vendor/dxvk/include/native/directx/dxerr9.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-53
+vendor/dxvk/src/d3d9/d3d9_window.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-37
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_directfb.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-55
+vendor/dxvk/src/d3d9/d3d9_caps.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-38
+vendor/dxvk/src/util/util_luid.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-45
+vendor/dxvk/src/vulkan/meson.build
+  s_ef7e2ce3136a21::t_435624aaa29425 1-16
+vendor/dxvk/src/util/util_sleep.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-125
+vendor/dxvk/src/dxbc/dxbc_decoder.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-509
+vendor/dxvk/include/native/directx/d3d11_4.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2596
+vendor/dxvk/src/dxvk/dxvk_meta_clear.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-113
+vendor/dxvk/src/spirv/spirv_code_buffer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-236
+vendor/dxvk/src/dxso/dxso_ctab.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-19
+vendor/dxvk/include/native/directx/d3dx9effect.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-447
+vendor/dxvk/include/native/directx/d3d11shader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-265
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.nonsemantic.debugprintf.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-13
+vendor/dxvk/src/dxbc/dxbc_enums.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-654
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.hpp11
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2943
+vendor/dxvk/src/dxvk/dxvk_shader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-606
+vendor/dxvk/include/native/directx/d3dx9tex.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-352
+vendor/dxvk/src/dxvk/dxvk_descriptor_info.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-245
+vendor/dxvk/include/spirv/include/spirv/1.0/extinst.glsl.std.450.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-642
+vendor/dxvk/src/dxvk/dxvk_gpu_event.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-174
+vendor/dxvk/src/dxvk/dxvk_descriptor_worker.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-176
+vendor/dxvk/include/native/windows/ocidl.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-3
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.lua
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2097
+vendor/dxvk/src/util/sync/sync_recursive.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-32
+vendor/dxvk/include/native/directx/d3d12.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-7794
+vendor/dxvk/src/dxvk/dxvk_swapchain_blitter.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-298
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.py
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2097
+vendor/dxvk/src/d3d9/d3d9_swvp_emu.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-61
+vendor/dxvk/include/spirv/include/spirv/1.1/spirv.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1015
+vendor/dxvk/include/spirv/include/spirv/1.2/spirv.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1021
+vendor/dxvk/src/util/util_env.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-156
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.opencl.debuginfo.100.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-651
+vendor/dxvk/src/dxvk/dxvk_device_filter.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-59
+vendor/dxvk/include/native/windows/pshpack4.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-8
+vendor/dxvk/include/spirv/include/spirv/1.0/spirv.hpp11
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1002
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.nonsemantic.vkspreflection.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-135
+vendor/dxvk/src/dxso/meson.build
+  s_ef7e2ce3136a21::t_435624aaa29425 1-24
+vendor/dxvk/src/spirv/spirv_compression.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-123
+vendor/dxvk/src/wsi/sdl2/wsi_monitor_sdl2.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-160
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.cs
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2163
+vendor/dxvk/include/native/directx/d3drmobj.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-4703
+vendor/dxvk/src/wsi/wsi_edid.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-71
+vendor/dxvk/src/d3d9/d3d9_bridge.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-127
+vendor/dxvk/src/dxso/dxso_enums.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-164
+vendor/dxvk/include/spirv/include/spirv/1.0/spirv.hpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1002
+vendor/dxvk/src/dxso/dxso_decoder.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-283
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2156
+vendor/dxvk/src/dxvk/dxvk_compute.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-164
+vendor/dxvk/include/spirv/include/spirv/1.0/extinst.opencl.std.100.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1279
+vendor/dxvk/src/d3d9/d3d9_fixed_function.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2756
+vendor/dxvk/src/util/sync/sync_spinlock.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-76
+vendor/dxvk/src/dxso/dxso_modinfo.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-17
+vendor/dxvk/src/dxvk/dxvk_queue.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-227
+tools/dxso2msl.sh
+  s_ef7e2ce3136a21::t_b6299acc2cb3e4 1-22
+vendor/dxvk/src/dxso/dxso_tables.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-93
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.core.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-16899
+vendor/dxvk/src/d3d9/d3d9_interop.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-145
+vendor/dxvk/include/native/directx/dxgi1_6.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1382
+vendor/dxvk/include/native/directx/d3d10.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-5789
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codecs_common.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-36
+vendor/dxvk/src/util/util_fps_limiter.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-142
+vendor/dxvk/src/dxvk/dxvk_recycler.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-65
+vendor/dxvk/src/dxbc/dxbc_names.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-26
+vendor/dxvk/src/dxvk/dxvk_annotation.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-33
+vendor/dxvk/src/dxso/dxso_header.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-31
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_av1std_decode.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-109
+vendor/dxvk/src/dxvk/dxvk_dummy_frag.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-10
+vendor/dxvk/src/dxvk/dxvk_instance.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-223
+vendor/dxvk/src/dxvk/dxvk_signal.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-41
+vendor/dxvk/src/d3d9/d3d9_options.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-175
+vendor/dxvk/src/util/util_env.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-79
+vendor/dxvk/include/spirv/include/spirv/1.0/spirv.core.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-5775
+vendor/dxvk/src/util/util_flush.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-90
+vendor/dxvk/include/native/directx/d3d11_2.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2249
+vendor/dxvk/include/spirv/include/spirv/1.2/OpenCL.std.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-210
+vendor/dxvk/src/wsi/sdl2/wsi_platform_sdl2.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-69
+vendor/dxvk/src/dxvk/dxvk_sparse.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1039
+vendor/dxvk/src/d3d9/d3d9_common_buffer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-249
+vendor/dxvk/include/spirv/include/spirv/1.1/spirv.hpp11
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1024
+vendor/dxvk/src/d3d9/d3d9_device.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1712
+vendor/dxvk/src/spirv/spirv_instruction.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-158
+vendor/dxvk/include/vulkan/include/vulkan/vk_layer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-189
+vendor/dxvk/include/spirv/include/spirv/1.0/spirv.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1020
+vendor/dxvk/src/wsi/sdl3/wsi_platform_sdl3_funcs.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-22
+vendor/dxvk/src/util/meson.build
+  s_ef7e2ce3136a21::t_435624aaa29425 1-35
+vendor/dxvk/src/util/util_string.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-242
+vendor/dxvk/src/dxvk/dxvk_openxr.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-69
+vendor/dxvk/src/wsi/sdl2/wsi_window_sdl2.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-173
+vendor/dxvk/src/d3d9/d3d9_device_child.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-77
+vendor/dxvk/include/native/directx/dxerr8.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-53
+vendor/dxvk/src/util/sha1/sha1.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-53
+vendor/dxvk/src/util/log/log.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-165
+vendor/dxvk/include/native/directx/d3d11_1.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-4230
+vendor/dxvk/include/native/windows/poppack.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-8
+vendor/dxvk/include/spirv/include/spirv/unified1/NonSemanticClspvReflection.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-97
+tools/shim.cpp
+  s_ef7e2ce3136a21::t_b778d4dd800752 1-6,8-11,15-16
+  s_ef7e2ce3136a21::t_f4872651a4b248 7,12-14
+vendor/dxvk/src/d3d9/d3d9_fixed_function.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-303
+vendor/dxvk/include/spirv/include/spirv/1.1/GLSL.std.450.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-131
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.debuginfo.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-572
+vendor/dxvk/src/dxvk/dxvk_fence.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-133
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_h265std_decode.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-67
+vendor/dxvk/src/dxvk/dxvk_pipemanager.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-343
+vendor/dxvk/include/native/directx/d3d9types.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1638
+vendor/dxvk/src/util/com/com_private_data.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-117
+vendor/dxvk/src/d3d9/d3d9_spec_constants.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-162
+vendor/dxvk/src/util/sync/sync_list.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-130
+vendor/dxvk/include/native/directx/dxgitype.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-96
+vendor/dxvk/src/util/thread.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-346
+vendor/dxvk/src/dxbc/dxbc_header.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-48
+vendor/dxvk/src/util/util_singleton.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-44
+vendor/dxvk/src/dxso/dxso_ctab.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-32
+vendor/dxvk/src/util/com/com_guid.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-21
+vendor/dxvk/src/dxso/dxso_reader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-60
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2894
+vendor/dxvk/src/d3d9/d3d9_hud.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-96
+vendor/dxvk/src/dxvk/dxvk_pipelayout.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-709
+vendor/dxvk/src/util/util_sleep.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-78
+vendor/dxvk/include/native/directx/README.md
+  s_ef7e2ce3136a21::t_435624aaa29425 1-31
+vendor/dxvk/include/native/directx/d3d10sdklayers.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1303
+vendor/dxvk/src/dxvk/dxvk_extension_provider.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-68
+vendor/dxvk/include/native/directx/d3d11on12.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-171
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.spv-amd-shader-ballot.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-41
+vendor/dxvk/include/spirv/include/spirv/1.1/spirv.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1040
+vendor/dxvk/src/spirv/spirv_module.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-4109
+vendor/dxvk/include/spirv/include/spirv/1.0/spirv.lua
+  s_ef7e2ce3136a21::t_435624aaa29425 1-949
+vendor/dxvk/include/vulkan/include/vulkan/vulkan.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-99
+vendor/dxvk/include/native/directx/dxgi.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2683
+vendor/dxvk/include/spirv/include/spirv/unified1/spv.d
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2165
+vendor/dxvk/include/spirv/.gitattributes
+  s_ef7e2ce3136a21::t_435624aaa29425 1-7
+vendor/dxvk/src/util/util_shared_res.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-66
+vendor/dxvk/include/spirv/include/spirv/unified1/NonSemanticDebugBreak.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-50
+vendor/dxvk/include/spirv/include/spirv/1.2/GLSL.std.450.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-131
+vendor/dxvk/src/util/com/com_include.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-17
+vendor/dxvk/src/util/util_bit.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-719
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.bf
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2164
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.nonsemantic.shader.debuginfo.100.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-713
+vendor/dxvk/src/d3d9/d3d9_format.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-310
+vendor/dxvk/include/native/wsi/native_wsi.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-13
+vendor/dxvk/src/dxvk/dxvk_options.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-73
+vendor/dxvk/src/util/util_flags.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-110
+vendor/dxvk/src/dxvk/dxvk_implicit_resolve.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-107
+vendor/dxvk/include/native/directx/d3dcommon.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-936
+vendor/dxvk/src/dxvk/dxvk_allocator.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-313
+vendor/dxvk/include/native/directx/d3d9caps.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-455
+vendor/dxvk/include/native/windows/rpc.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-3
+vendor/dxvk/include/spirv/.gitignore
+  s_ef7e2ce3136a21::t_435624aaa29425 1-3
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_win32.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-342
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.spv-amd-shader-trinary-minmax.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-95
+vendor/dxvk/include/native/wsi/native_sdl2.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-25
+vendor/dxvk/include/spirv/include/spirv/1.2/spirv.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1046
+vendor/dxvk/include/native/windows/oaidl.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-3
+vendor/dxvk/src/dxvk/dxvk_image.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-816
+vendor/dxvk/include/vulkan/LICENSE.md
+  s_ef7e2ce3136a21::t_435624aaa29425 1-18
+vendor/dxvk/src/dxso/dxso_code.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-54
+vendor/dxvk/src/wsi/glfw/wsi_platform_glfw_funcs.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-13
+vendor/dxvk/src/d3d9/d3d9_annotation.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-91
+vendor/dxvk/src/vulkan/vulkan_loader.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-108
+vendor/dxvk/include/native/directx/d3d.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1569
+vendor/dxvk/src/dxbc/dxbc_analysis.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-113
+vendor/dxvk/src/wsi/meson.build
+  s_ef7e2ce3136a21::t_435624aaa29425 1-36
+vendor/dxvk/src/d3d9/d3d9_initializer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-95
+vendor/dxvk/include/native/directx/d3d11.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-10992
+vendor/dxvk/include/native/directx/d3dx9xof.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-187
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.spv-amd-gcn-shader.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-26
+vendor/dxvk/src/vulkan/vulkan_util.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-385
+vendor/dxvk/src/dxvk/dxvk_constant_state.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-649
+vendor/dxvk/src/dxvk/dxvk_context.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2245
+vendor/dxvk/src/util/com/com_destruction_notifier.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-53
+vendor/dxvk/src/d3d9/d3d9_constant_layout.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-31
+vendor/dxvk/src/d3d9/d3d9_include.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-105
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_macos.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-48
+vendor/dxvk/include/spirv/include/spirv/1.2/spirv.lua
+  s_ef7e2ce3136a21::t_435624aaa29425 1-977
+vendor/dxvk/include/spirv/include/spirv/1.0/spirv.cs
+  s_ef7e2ce3136a21::t_435624aaa29425 1-993
+vendor/dxvk/src/d3d9/d3d9_buffer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-99
+vendor/dxvk/src/dxvk/dxvk_latency_builtin.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-127
+vendor/dxvk/src/wsi/win32/wsi_platform_win32.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-100
+vendor/dxvk/src/dxvk/dxvk_shader.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1856
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_android.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-153
+vendor/dxvk/src/dxso/dxso_common.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-26
+vendor/dxvk/src/spirv/spirv_include.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-15
+vendor/dxvk/include/native/directx/d3d11_3.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-5238
+vendor/dxvk/src/wsi/sdl3/wsi_window_sdl3.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-177
+vendor/dxvk/src/dxvk/dxvk_hash.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-41
+vendor/dxvk/include/native/directx/d3d12shader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1137
+vendor/dxvk/src/dxvk/dxvk_openvr.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-83
+vendor/dxvk/src/spirv/meson.build
+  s_ef7e2ce3136a21::t_435624aaa29425 1-9
+vendor/dxvk/src/dxvk/dxvk_device.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-697
+vendor/dxvk/include/native/directx/d3drm.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-525
+vendor/dxvk/include/native/directx/d3drmdef.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-466
+vendor/dxvk/src/util/util_version.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-48
+vendor/dxvk/src/util/log/log_debug.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-49
+vendor/dxvk/src/wsi/sdl3/wsi_platform_sdl3.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-78
+vendor/dxvk/src/wsi/wsi_monitor.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-152
+tools/dxso2spv.cpp
+  s_ef7e2ce3136a21::t_4a4794b0b1389f 1-69
+vendor/dxvk/src/dxvk/dxvk_framebuffer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-335
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_ios.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-48
+vendor/dxvk/src/dxvk/dxvk_graphics.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-685
+vendor/dxvk/include/native/windows/objbase.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-3
+vendor/dxvk/src/dxso/dxso_include.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-18
+vendor/dxvk/include/native/directx/d3dx9.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-56
+vendor/dxvk/include/native/windows/rpcndr.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-3
+vendor/dxvk/src/util/util_luid.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-15
+vendor/dxvk/include/native/directx/dxgicommon.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-75
+vendor/dxvk/include/spirv/.github/workflows/presubmit.yml
+  s_ef7e2ce3136a21::t_435624aaa29425 1-123
+vendor/dxvk/src/d3d9/d3d9_stateblock.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-410
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_fuchsia.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-262
+vendor/dxvk/src/dxbc/dxbc_modinfo.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-59
+vendor/dxvk/include/native/directx/dxgi1_4.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1356
+vendor/dxvk/include/spirv/.github/dependabot.yml
+  s_ef7e2ce3136a21::t_435624aaa29425 1-10
+vendor/dxvk/src/util/rc/util_rc_ptr.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-189
+vendor/dxvk/src/dxvk/dxvk_unbound.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-104
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_xlib_xrandr.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-46
+vendor/dxvk/include/native/directx/d3dx9shader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-465
+vendor/dxvk/src/d3d9/d3d9_interface.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-178
+vendor/dxvk/src/dxbc/dxbc_defs.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-104
+vendor/dxvk/include/native/directx/d3d10shader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-234
+vendor/dxvk/src/d3d9/d3d9_subresource.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-151
+vendor/dxvk/src/d3d9/d3d9_mem.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-178
+vendor/dxvk/include/native/directx/dxva2api.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1589
+vendor/dxvk/src/dxvk/dxvk_gpu_query.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-457
+vendor/dxvk/src/util/sync/sync_ticketlock.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-40
+vendor/dxvk/src/util/thread.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-114
+vendor/dxvk/include/spirv/include/spirv/unified1/NonSemanticShaderDebugInfo100.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-171
+vendor/dxvk/src/wsi/wsi_platform.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-122
+vendor/dxvk/src/dxvk/dxvk_descriptor.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-47
+vendor/dxvk/include/native/directx/d3d8.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1154
+vendor/dxvk/src/util/util_flush.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-90
+vendor/dxvk/include/native/windows/ole2.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-3
+vendor/dxvk/src/d3d9/d3d9_vertex_declaration.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-107
+vendor/dxvk/src/util/com/com_private_data.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-171
+vendor/dxvk/include/spirv/include/spirv/unified1/OpenCLDebugInfo100.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-158
+vendor/dxvk/src/util/util_likely.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-11
+vendor/dxvk/src/dxvk/dxvk_bind_mask.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-181
+vendor/dxvk/src/dxvk/dxvk_shader_key.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-76
+vendor/dxvk/src/d3d9/d3d9_on_12.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-29
+vendor/dxvk/src/util/util_math.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-40
+vendor/dxvk/include/spirv/include/spirv/1.2/extinst.glsl.std.450.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-642
+vendor/dxvk/src/d3d9/d3d9_common_texture.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-554
+vendor/dxvk/include/spirv/include/spirv/1.2/spirv.hpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1030
+vendor/dxvk/include/spirv/include/spirv/1.2/spirv.hpp11
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1030
+vendor/dxvk/src/util/util_enum.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-7
+vendor/dxvk/src/util/util_gdi.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-45
+vendor/dxvk/src/util/util_matrix.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-86
+vendor/dxvk/src/dxvk/dxvk_access.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-122
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_h264std_decode.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-77
+vendor/dxvk/src/util/util_ratio.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-88
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.glsl.std.450.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-642
+vendor/dxvk/src/wsi/win32/wsi_monitor_win32.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-367
+vendor/dxvk/src/util/util_time.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-65
+vendor/dxvk/include/native/directx/_mingw_unicode.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-33
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_h264std.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-312
+vendor/dxvk/src/d3d9/d3d9_shader_validator.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-105
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_av1std_encode.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-143
+vendor/dxvk/src/util/log/log.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-73
+vendor/dxvk/src/d3d9/d3d9_monitor.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-70
+vendor/dxvk/include/native/directx/dxva.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-923
+vendor/dxvk/src/dxso/dxso_header.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-24
+vendor/dxvk/include/native/directx/dxgi1_2.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2204
+vendor/dxvk/src/util/sha1/sha1_util.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-63
+vendor/dxvk/include/spirv/include/spirv/unified1/NonSemanticVkspReflection.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-57
+vendor/dxvk/src/dxvk/dxvk_latency.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-223
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_xcb.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-56
+vendor/dxvk/include/native/directx/dxgidebug.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-135
+vendor/dxvk/src/dxvk/dxvk_graphics_state.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-749
+vendor/dxvk/include/spirv/include/spirv/1.1/spirv.cs
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1015
+vendor/dxvk/src/dxvk/dxvk_meta_resolve.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-118
+vendor/dxvk/src/dxbc/dxbc_util.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-141
+vendor/dxvk/src/dxvk/dxvk_limits.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-28
+vendor/dxvk/include/native/directx/d3d11sdklayers.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1968
+vendor/dxvk/src/dxso/dxso_compiler.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-3818
+vendor/dxvk/include/native/directx/dxdiag.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-156
+vendor/dxvk/src/spirv/spirv_compression.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-38
+vendor/dxvk/src/dxbc/dxbc_chunk_isgn.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-68
+vendor/dxvk/src/util/util_small_vector.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-216
+vendor/dxvk/src/d3d9/d3d9_constant_buffer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-85
+vendor/dxvk/src/d3d9/d3d9_shader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-228
+vendor/dxvk/src/wsi/glfw/wsi_monitor_glfw.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-171
+vendor/dxvk/src/util/util_misc.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-56
+vendor/dxvk/src/d3d9/d3d9_swapchain.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-261
+vendor/dxvk/include/spirv/LICENSE
+  s_ef7e2ce3136a21::t_435624aaa29425 1-103
+vendor/dxvk/include/spirv/include/spirv/unified1/OpenCL.std.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-401
+vendor/dxvk/src/util/com/com_guid.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-66
+vendor/dxvk/src/util/sha1/sha1.c
+  s_ef7e2ce3136a21::t_435624aaa29425 1-170
+vendor/dxvk/src/dxvk/dxvk_memory.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1503
+vendor/dxvk/include/native/directx/d3dx9shape.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-51
+vendor/dxvk/include/native/directx/d3dcaps.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-439
+vendor/dxvk/include/native/directx/d3dtypes.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1370
+vendor/dxvk/src/d3d9/d3d9_format_helpers.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-57
+vendor/dxvk/src/d3d9/d3d9_query.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-91
+vendor/dxvk/src/d3d9/d3d9_multithread.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-77
+vendor/dxvk/src/dxbc/dxbc_compiler.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1307
+vendor/dxvk/src/wsi/glfw/wsi_platform_glfw.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-115
+vendor/dxvk/src/wsi/win32/wsi_window_win32.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-324
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_h265std_encode.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-157
+vendor/dxvk/include/spirv/include/spirv/1.0/OpenCL.std.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-210
+vendor/dxvk/include/spirv/include/spirv/unified1/spirv.hpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-2943
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_core.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-21846
+vendor/dxvk/src/dxvk/dxvk_format.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-136
+vendor/dxvk/include/spirv/include/spirv/1.1/OpenCL.std.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-210
+vendor/dxvk/include/vulkan/LICENSES/MIT.txt
+  s_ef7e2ce3136a21::t_435624aaa29425 1-9
+vendor/dxvk/src/spirv/spirv_code_buffer.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-166
+vendor/dxvk/include/spirv/include/spirv/1.2/spirv.cs
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1021
+tools/test_ps.hlsl
+  s_ef7e2ce3136a21::t_ff66471eae19b4 1-15
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_av1std.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-394
+vendor/dxvk/src/dxvk/dxvk_context_state.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-240
+vendor/dxvk/include/spirv/include/spirv/unified1/AMD_shader_explicit_vertex_parameter.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-50
+vendor/dxvk/src/dxvk/dxvk_platform_exts.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-26
+vendor/dxvk/src/wsi/win32/wsi_platform_win32.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-23
+vendor/dxvk/include/native/directx/dxgi1_3.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1954
+vendor/dxvk/include/spirv/include/spirv/unified1/AMD_gcn_shader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-52
+vendor/dxvk/include/native/directx/d3dhal.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-589
+vendor/dxvk/src/wsi/wsi_edid.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-91
+vendor/dxvk/src/dxvk/dxvk_staging.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-87
+vendor/dxvk/src/d3d9/d3d9_constant_set.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-57
+vendor/dxvk/include/vulkan/include/vk_video/vulkan_video_codec_h264std_encode.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-147
+vendor/dxvk/src/dxvk/dxvk_util.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-593
+vendor/dxvk/src/dxvk/dxvk_shader_key.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-43
+vendor/dxvk/include/native/directx/d3dx9math.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-476
+vendor/dxvk/src/wsi/sdl2/wsi_platform_sdl2.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-113
+vendor/dxvk/src/dxvk/dxvk_pipelayout.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1858
+vendor/dxvk/src/d3d9/d3d9_names.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-9
+vendor/dxvk/include/native/directx/d3d10misc.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-49
+vendor/dxvk/include/spirv/include/spirv/1.1/spirv.py
+  s_ef7e2ce3136a21::t_435624aaa29425 1-971
+vendor/dxvk/include/spirv/include/spirv/1.2/spirv.core.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-5986
+tools/test_vs.hlsl
+  s_ef7e2ce3136a21::t_f6d624750dee9a 1-23
+vendor/dxvk/include/spirv/include/spirv/unified1/extinst.nonsemantic.clspvreflection.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-426
+vendor/dxvk/src/dxvk/dxvk_buffer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-663
+vendor/dxvk/include/native/windows/unknwn.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-52
+vendor/dxvk/include/native/directx/d3d10_1.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1442
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_metal.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-236
+vendor/dxvk/src/util/com/com_pointer.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-151
+vendor/dxvk/include/native/wsi/native_sdl3.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-25
+vendor/dxvk/src/util/util_lru.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-69
+vendor/dxvk/include/vulkan/LICENSES/Apache-2.0.txt
+  s_ef7e2ce3136a21::t_435624aaa29425 1-202
+vendor/dxvk/include/native/directx/dxfile.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-300
+vendor/dxvk/include/vulkan/include/vulkan/vk_platform.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-84
+vendor/dxvk/src/dxbc/dxbc_include.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-18
+vendor/dxvk/src/dxso/dxso_options.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-36
+vendor/dxvk/src/dxso/dxso_module.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-96
+vendor/dxvk/src/dxso/dxso_reader.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-26
+vendor/dxvk/src/dxvk/dxvk_cmdlist.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1354
+vendor/dxvk/src/dxso/dxso_tables.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-11
+vendor/dxvk/src/util/util_lazy.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-40
+vendor/dxvk/include/native/directx/d3d10effect.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-860
+vendor/dxvk/src/spirv/spirv_module.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1359
+vendor/dxvk/include/spirv/include/spirv/1.2/spirv.py
+  s_ef7e2ce3136a21::t_435624aaa29425 1-977
+vendor/dxvk/include/spirv/include/spirv/unified1/AMD_shader_trinary_minmax.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-58
+vendor/dxvk/include/native/directx/d3d8types.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1220
+vendor/dxvk/include/spirv/include/spirv/1.0/spirv.py
+  s_ef7e2ce3136a21::t_435624aaa29425 1-949
+vendor/dxvk/src/vulkan/vulkan_names.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-28
+vendor/dxvk/src/wsi/sdl3/wsi_platform_sdl3.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-129
+vendor/dxvk/src/wsi/sdl2/wsi_platform_sdl2_funcs.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-17
+vendor/dxvk/include/spirv/include/spirv/unified1/DebugInfo.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-144
+vendor/dxvk/include/native/directx/d3dx9math.inl
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1298
+vendor/dxvk/include/spirv/include/spirv/unified1/GLSL.std.450.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-131
+vendor/dxvk/src/util/util_matrix.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-236
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_wayland.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-55
+vendor/dxvk/src/dxvk/dxvk_sampler.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-402
+vendor/dxvk/include/spirv/include/spirv/spir-v.xml
+  s_ef7e2ce3136a21::t_435624aaa29425 1-296
+vendor/dxvk/src/dxso/dxso_options.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-55
+vendor/dxvk/src/util/util_win32_compat.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-79
+vendor/dxvk/include/spirv/include/spirv/1.1/extinst.glsl.std.450.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-642
+vendor/dxvk/src/dxvk/dxvk_presenter.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-389
+vendor/dxvk/include/native/windows/windows.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-4
+vendor/dxvk/src/dxso/dxso_enums.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-101
+vendor/dxvk/include/spirv/include/spirv/1.1/spirv.hpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1024
+vendor/dxvk/src/dxvk/dxvk_latency_reflex.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-199
+vendor/dxvk/src/dxvk/dxvk_stats.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-126
+vendor/dxvk/include/spirv/include/spirv/1.1/extinst.opencl.std.100.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1279
+vendor/dxvk/include/spirv/include/spirv/unified1/NonSemanticDebugPrintf.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-50
+vendor/dxvk/src/util/util_fps_limiter.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-70
+vendor/dxvk/src/vulkan/vulkan_names.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-447
+vendor/dxvk/src/dxbc/dxbc_reader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-78
+vendor/dxvk/src/dxvk/dxvk_barrier.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-290
+vendor/dxvk/src/util/config/config.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-159
+vendor/dxvk/src/util/sync/sync_signal.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-203
+vendor/dxvk/src/vulkan/vulkan_loader.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-498
+vendor/dxvk/include/native/directx/dxgi1_5.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1407
+vendor/dxvk/src/dxso/dxso_isgn.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-41
+vendor/dxvk/src/d3d9/d3d9_util.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-380
+vendor/dxvk/include/native/directx/dxgiformat.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-161
+vendor/dxvk/src/util/com/com_destruction_notifier.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-81
+vendor/dxvk/src/d3d9/d3d9_state.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-384
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_beta.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-226
+tools/hlsl2dxso.c
+  s_ef7e2ce3136a21::t_cfb9ead1c7cbd1 1-3,5-45
+  s_ef7e2ce3136a21::t_5705048af0cda2 4
+vendor/dxvk/include/native/directx/d3d12sdklayers.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1586
+vendor/dxvk/include/native/directx/d3dx9anim.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-410
+vendor/dxvk/src/dxvk/dxvk_objects.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-103
+vendor/dxvk/include/spirv/include/spirv/1.1/spirv.core.grammar.json
+  s_ef7e2ce3136a21::t_435624aaa29425 1-5938
+vendor/dxvk/src/d3d9/d3d9_surface.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-74
+vendor/dxvk/include/spirv/include/spirv/1.1/spirv.lua
+  s_ef7e2ce3136a21::t_435624aaa29425 1-971
+vendor/dxvk/src/dxso/dxso_common.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-88
+vendor/dxvk/src/util/log/log_debug.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-11
+vendor/dxvk/src/util/util_error.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-31
+vendor/dxvk/src/d3d9/d3d9_volume.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-40
+vendor/dxvk/src/dxso/dxso_util.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-62
+vendor/dxvk/src/dxbc/dxbc_tag.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-47
+vendor/dxvk/src/dxvk/dxvk_descriptor_heap.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-242
+vendor/dxvk/include/spirv/include/spirv/unified1/AMD_shader_ballot.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-53
+vendor/dxvk/src/dxso/dxso_util.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-34
+vendor/dxvk/src/dxvk/dxvk_descriptor_pool.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-220
+vendor/dxvk/src/wsi/glfw/wsi_window_glfw.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-161
+vendor/dxvk/include/spirv/include/spirv/1.0/spirv.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-993
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_vi.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-48
+vendor/dxvk/src/dxvk/dxvk_meta_copy.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-239
+vendor/dxvk/src/dxso/dxso_module.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-94
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_ggp.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-60
+vendor/dxvk/src/dxso/dxso_analysis.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-57
+tools/build-host.sh
+  s_ef7e2ce3136a21::t_6dd5609f247550 57
+  s_ef7e2ce3136a21::t_653ad726e15c60 1-15,18-31,34-42,44-49,51-56,58-63
+  s_ef7e2ce3136a21::t_af6de482314530 32-33
+  s_ef7e2ce3136a21::t_25679b2eeb4499 16-17
+  s_ef7e2ce3136a21::t_4467ff21bae62b 43
+  s_ef7e2ce3136a21::t_22e7fe3db21b21 50
+vendor/dxvk/include/native/meson.build
+  s_ef7e2ce3136a21::t_435624aaa29425 1-20
+vendor/dxvk/src/dxvk/dxvk_cs.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-610
+vendor/dxvk/src/wsi/glfw/wsi_platform_glfw.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-71
+vendor/dxvk/src/dxvk/dxvk_include.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-25
+vendor/dxvk/include/native/directx/d3d8caps.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-296
+vendor/dxvk/include/native/directx/d3dvec.inl
+  s_ef7e2ce3136a21::t_435624aaa29425 1-143
+vendor/dxvk/src/d3d9/d3d9_adapter.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-160
+vendor/dxvk/src/dxvk/dxvk_device_info.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-430
+vendor/dxvk/src/util/sync/sync_recursive.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-36
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_screen.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-108
+vendor/dxvk/src/wsi/wsi_platform.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-189
+vendor/dxvk/src/dxvk/dxvk_meta_mipgen.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-149
+vendor/dxvk/src/dxvk/dxvk_adapter.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-315
+vendor/dxvk/include/native/directx/d3dx9mesh.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1060
+vendor/dxvk/src/dxso/dxso_decoder.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-276
+vendor/dxvk/include/vulkan/include/vulkan/vulkan_xlib.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-56
+vendor/dxvk/src/dxvk/dxvk_meta_blit.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-137
+vendor/dxvk/src/util/config/config.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-1711
+vendor/dxvk/src/util/rc/util_rc.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-38
+vendor/dxvk/include/native/windows/windows_base.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-400
+vendor/dxvk/src/wsi/wsi_window.h
+  s_ef7e2ce3136a21::t_435624aaa29425 1-169
+vendor/dxvk/src/dxso/dxso_code.cpp
+  s_ef7e2ce3136a21::t_435624aaa29425 1-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "a089198edccade2c2274368b531fc48f24d546dc",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
