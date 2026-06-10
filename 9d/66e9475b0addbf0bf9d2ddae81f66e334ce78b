@@ -1,0 +1,41 @@
+test/unixcall.c
+  s_ef7e2ce3136a21::t_d00377c8c500d1 1-2,6-31,34,55-56,58-60,62-69,74-81,83-85,87-88,90-91
+  s_ef7e2ce3136a21::t_0293a55f32fa38 3-5,32-33,36-53,57,61,70-73,82,86,89
+  s_ef7e2ce3136a21::t_185f0e85f83c3a 35,54
+unixcall_out.txt
+  s_ef7e2ce3136a21::t_f2514caceb32c6 1-2
+src/d9mtmetal/d9mtmetal.h
+  s_ef7e2ce3136a21::t_0b7441be49ba62 1-94
+tools/make-builtin.py
+  s_ef7e2ce3136a21::t_d477b5dedbad33 1-7,11-20
+  s_ef7e2ce3136a21::t_693d13cae0f83c 8-10
+src/d9mtmetal/dll.c
+  s_ef7e2ce3136a21::t_98f53b38db1d9e 23-24,40-41,43-44
+  s_ef7e2ce3136a21::t_91981d2837704c 26,28-33
+  s_ef7e2ce3136a21::t_69526e7fd703f2 1-22,25,27,34-36,38,46-47
+  s_ef7e2ce3136a21::t_5997cdb1085f43 37,39,42,45
+tools/build-d9mtmetal.sh
+  s_ef7e2ce3136a21::t_dc4ef5b565ee58 1-21,25-26,35-37,39-41,59-72,88,97-102
+  s_ef7e2ce3136a21::t_40d826176a1952 22-24,27-34,38
+  s_ef7e2ce3136a21::t_b5beb914dee461 42,52-53,55-56
+  s_ef7e2ce3136a21::t_1c644d17d649e2 89-96
+  s_ef7e2ce3136a21::t_7e7fdb9ddd7b58 43-46
+  s_ef7e2ce3136a21::t_524a3650620983 73-87
+  s_ef7e2ce3136a21::t_7f86e79c26124f 47-51,54,57-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "9d66e9475b0addbf0bf9d2ddae81f66e334ce78b",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
