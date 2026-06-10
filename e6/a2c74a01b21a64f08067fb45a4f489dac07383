@@ -1,0 +1,114 @@
+vendor/spirv-cross/spirv_common.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-2096
+src/d3d9/d3d9.cpp
+  s_ef7e2ce3136a21::t_a7e4152f3e65db 1374-1415,1442-1519,1521-1728
+  s_ef7e2ce3136a21::t_1d482a637593de 845-848,852,857-861
+  s_ef7e2ce3136a21::t_8a9d84f45319f0 1520
+  s_ef7e2ce3136a21::t_0a8237b4b3c497 998-1011,1015,1020-1024,1030-1033,1038-1041,1047-1050,1055-1058
+  s_ef7e2ce3136a21::t_50d345670d54b1 1294-1314
+  s_ef7e2ce3136a21::t_1670dfa146a89a 1804-1811
+  s_ef7e2ce3136a21::t_30281679a26e6b 1416-1441
+  s_ef7e2ce3136a21::t_8d8a47954f925d 950-954,960-968
+  s_ef7e2ce3136a21::t_1bfde35bbf66b4 70-379
+  s_ef7e2ce3136a21::t_e36ef1ebe7d5a3 16-18,21-22
+  s_ef7e2ce3136a21::t_a4b35517349920 821,824
+  s_ef7e2ce3136a21::t_7f9fa78c2855a9 983,988-992
+  s_ef7e2ce3136a21::t_7150ed5ab5e74d 524-535,540-553
+  s_ef7e2ce3136a21::t_f33aad351c5644 1321-1323
+  s_ef7e2ce3136a21::t_5f2445d5bd1452 1110-1181
+  s_ef7e2ce3136a21::t_0dc8b4b4f2bb41 876-889,893,898-902,908-911,916-919,925-928,933-936
+  s_ef7e2ce3136a21::t_7b9c9e8c5ac0ab 1756-1761,1763,1775,1782-1784,1786-1788
+vendor/spirv-cross/NonSemanticShaderDebugInfo100.h
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-171
+vendor/spirv-cross/spirv_msl.cpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-20918
+scripts/build.sh
+  s_ef7e2ce3136a21::t_45db4db5a57af0 68,73
+  s_ef7e2ce3136a21::t_fd11f6b854c98c 69
+  s_ef7e2ce3136a21::t_59f91f8d53fd2e 98-126
+  s_ef7e2ce3136a21::t_f0c21f4c29edb5 26-67,72,76,78,81-88
+  s_ef7e2ce3136a21::t_64707b89439ced 70-71,77
+vendor/spirv-cross/GLSL.std.450.h
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-114
+vendor/spirv-cross/LICENSE
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-202
+vendor/spirv-cross/spirv.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-5667
+vendor/spirv-cross/spirv_parser.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-103
+test/unixcall.c
+  s_ef7e2ce3136a21::t_8c21127a6a5183 21-22
+  s_ef7e2ce3136a21::t_2dc81d9bf335b9 99-166
+  s_ef7e2ce3136a21::t_13269ec38b0cab 34-45
+vendor/spirv-cross/spirv_cross_containers.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-756
+vendor/spirv-cross/spirv_cfg.cpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-525
+vendor/spirv-cross/spirv_glsl.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-1132
+vendor/spirv-cross/spirv.h
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-5602
+src/d9mtmetal/unix.m
+  s_ef7e2ce3136a21::t_c7c32eb94a817d 53-58
+  s_ef7e2ce3136a21::t_194bac99e7523d 59-62
+  s_ef7e2ce3136a21::t_b7eeeeb60255fa 116-128
+tools/build-host.sh
+  s_ef7e2ce3136a21::t_09776a041776c0 45-64,68,72-74,77-91
+vendor/spirv-cross/spirv_parser.cpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-1610
+src/d3d9/d9mt_translate.h
+  s_ef7e2ce3136a21::t_450d47c5e09a0d 1-37,43-49
+  s_ef7e2ce3136a21::t_f1f302a1427fed 38-42
+vendor/spirv-cross/spirv_cross.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-1264
+vendor/spirv-cross/spirv_msl.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-1440
+src/d3d9/d9mt_dxvk_stubs.cpp
+  s_ef7e2ce3136a21::t_477bfbeb016e63 55-56
+  s_ef7e2ce3136a21::t_c58ef542f5b902 1-54,57-61
+src/d3d9/d9mt_translate.cpp
+  s_ef7e2ce3136a21::t_7f023bf62348af 127-132
+  s_ef7e2ce3136a21::t_3cb0cf4a033bc4 1-53,57,59-90,96,98,100-126,133-148
+  s_ef7e2ce3136a21::t_6e43213b43c54f 54-56,58
+  s_ef7e2ce3136a21::t_035e160e92e942 91-95,97,99
+test/shadertri_ps.hlsl
+  s_ef7e2ce3136a21::t_12738c3fc77c4a 1-6
+test/shadertri_vs.hlsl
+  s_ef7e2ce3136a21::t_ea77755fb071e8 1-19
+src/d9mtmetal/d9mtmetal.h
+  s_ef7e2ce3136a21::t_6f9c58bf4d0cf4 91-93,95-97
+test/shadertri.c
+  s_ef7e2ce3136a21::t_bb62f22ef72214 1-170
+vendor/spirv-cross/spirv_cross_parsed_ir.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-273
+vendor/spirv-cross/spirv_glsl.cpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-20865
+vendor/spirv-cross/COMMIT.txt
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1
+vendor/spirv-cross/spirv_cfg.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-168
+vendor/spirv-cross/spirv_cross.cpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-6061
+vendor/spirv-cross/spirv_cross_error_handling.hpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-99
+vendor/spirv-cross/spirv_cross_parsed_ir.cpp
+  s_ef7e2ce3136a21::t_3054904cf0d5f1 1-1149
+tools/translate-test.cpp
+  s_ef7e2ce3136a21::t_76c7191cc7df01 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e6a2c74a01b21a64f08067fb45a4f489dac07383",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
