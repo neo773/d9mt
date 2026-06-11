@@ -1,0 +1,19 @@
+src/d3d9/d3d9.cpp
+  s_ef7e2ce3136a21::t_cef2e9c3e887dd 556-557,729,775-782,796-802,1160,2354-2356,2984,3529-3548
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8f6cd7a4ae2e233e775ff32c39f807b23c2dcf5e",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
