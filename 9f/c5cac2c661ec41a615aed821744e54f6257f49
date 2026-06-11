@@ -1,0 +1,40 @@
+scripts/build.sh
+  s_ef7e2ce3136a21::t_cf56d0c70819a8 129-138
+test/depthtri.c
+  s_ef7e2ce3136a21::t_d6b5484120f288 1-176
+src/d3d9/d3d9.cpp
+  s_ef7e2ce3136a21::t_0473b6a0306146 2171-2192
+  s_ef7e2ce3136a21::t_fc4aa2469c7a0e 82
+  s_ef7e2ce3136a21::t_e53315b45c2f21 104-143
+  s_ef7e2ce3136a21::t_965cf60590120d 1996-2004,2007,2015-2031
+  s_ef7e2ce3136a21::t_fa8af75dddb847 2556-2558
+  s_ef7e2ce3136a21::t_02b7e35df96d21 1684
+  s_ef7e2ce3136a21::t_47c2f9170bd6c2 1859-1862
+  s_ef7e2ce3136a21::t_51e6422a4bc8ef 2492-2496
+  s_ef7e2ce3136a21::t_43bec1cb5cf555 1252-1255,1259-1263,1265-1268
+  s_ef7e2ce3136a21::t_4e4f2351c92dbe 1146-1147,1152-1154
+  s_ef7e2ce3136a21::t_41d84c9bb8725a 1074-1075
+  s_ef7e2ce3136a21::t_1bd36dd3a58372 798-805
+  s_ef7e2ce3136a21::t_6d015b138c9e88 1615
+  s_ef7e2ce3136a21::t_c03a2d733b09dd 1765-1767
+  s_ef7e2ce3136a21::t_71f364d8a9d21f 2232-2287
+  s_ef7e2ce3136a21::t_0e35a0d8542a1d 1094-1097,1103-1106
+  s_ef7e2ce3136a21::t_a83df6f90d3c34 1637-1655
+  s_ef7e2ce3136a21::t_37f4342491b367 1802-1822
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "9fc5cac2c661ec41a615aed821744e54f6257f49",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
