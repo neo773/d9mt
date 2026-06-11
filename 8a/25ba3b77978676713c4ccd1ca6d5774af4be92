@@ -1,0 +1,152 @@
+vendor/dxvk/src/d3d9/d3d9_swvp_emu.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-378
+vendor/dxvk/src/d3d9/d3d9_mem.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-362
+vendor/dxvk/src/d3d9/shaders/d3d9_convert_common.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-44
+vendor/dxvk/src/dxvk/dxvk_format.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-606
+vendor/dxvk/src/d3d9/d3d9_annotation.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-177
+vendor/dxvk/src/d3d9/shaders/d3d9_convert_w11v11u10.comp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-43
+vendor/dxvk/src/d3d9/d3d9_interface.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-549
+vendor/dxvk/src/dxvk/dxvk_util.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-375
+vendor/dxvk/src/d3d9/d3d9_stateblock.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-593
+vendor/dxvk/src/d3d9/d3d9_monitor.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-81
+vendor/dxvk/src/d3d9/d3d9_format.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-648
+vendor/dxvk/src/util/com/com_guid.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 6-10
+vendor/dxvk/src/d3d9/d3d9_volume.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-153
+vendor/dxvk/src/d3d9/d3d9_buffer.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-124
+vendor/dxvk/src/d3d9/d3d9_texture.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-308
+vendor/dxvk/src/d3d9/d3d9_options.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-112
+vendor/dxvk/src/d3d9/d3d9_multithread.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-9
+vendor/dxvk/src/dxvk/hud/dxvk_hud_font.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-31
+vendor/dxvk/generated/d3d9_convert_nv12.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-170
+vendor/dxvk/src/d3d9/d3d9_shader_validator.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-218
+vendor/dxvk/generated/d3d9_convert_w11v11u10.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-115
+vendor/dxvk/src/d3d9/shaders/d3d9_convert_yuy2_uyvy.comp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-53
+vendor/dxvk/generated/d3d9_convert_x8l8v8u8.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-125
+vendor/dxvk/src/d3d9/d3d9_hud.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-116
+vendor/dxvk/src/d3d9/d3d9_initializer.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-190
+vendor/dxvk/generated/d3d9_convert_a2w10v10u10.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-133
+vendor/dxvk/src/d3d9/shaders/d3d9_convert_yv12.comp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-58
+vendor/dxvk/src/dxvk/hud/dxvk_hud_renderer.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-170
+vendor/dxvk/src/d3d9/d3d9_cursor.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-149
+vendor/dxvk/src/d3d9/d3d9_format_helpers.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-186
+docs/BACKEND-SURFACE.md
+  s_ef7e2ce3136a21::t_2e78e60613097a 1-588
+vendor/dxvk/src/dxvk/hud/dxvk_hud.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-85
+vendor/dxvk/generated/d3d9_convert_yv12.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-143
+vendor/dxvk/src/d3d9/d3d9_query.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-333
+vendor/dxvk/src/d3d9/d3d9_common_buffer.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-178
+scripts/build-dxvkfe.sh
+  s_ef7e2ce3136a21::t_df88d25f2b35ca 68-69,74-77
+  s_ef7e2ce3136a21::t_c915de76971d66 1-67,70-73,78-185
+vendor/dxvk/src/d3d9/shaders/d3d9_convert_nv12.comp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-63
+vendor/dxvk/src/d3d9/d3d9_shader.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-216
+vendor/dxvk/src/d3d9/d3d9_state.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-28
+vendor/dxvk/src/d3d9/d3d9_vertex_declaration.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-382
+vendor/dxvk/src/dxvk/dxvk_constant_state.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-120
+vendor/dxvk/src/d3d9/d3d9_on_12.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-40
+vendor/dxvk/src/d3d9/d3d9_swapchain.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-1484
+vendor/dxvk/src/dxvk/hud/dxvk_hud_item.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-778
+vendor/dxvk/src/d3d9/d3d9_common_texture.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-750
+vendor/dxvk/src/d3d9/d3d9_window.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-176
+vendor/dxvk/DXVK-VERSION
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-100
+vendor/dxvk/src/d3d9/d3d9_adapter.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-1061
+src/d3d9fe/stubs.cpp
+  s_ef7e2ce3136a21::t_9a2c761bfc7012 1-3,7-9,12-15,39-44,305
+  s_ef7e2ce3136a21::t_ad0ecfb05e284b 272,274-277,279,281-284
+  s_ef7e2ce3136a21::t_57e9c5d10045b2 4-6,10-11,16-38,45-209,214-271,273,278,280,285-290,292-304,306
+  s_ef7e2ce3136a21::t_01c39e4dcabbb0 291
+  s_ef7e2ce3136a21::t_c9c7a378efa9f3 210-213
+vendor/dxvk/src/d3d9/shaders/d3d9_convert_x8l8v8u8.comp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-43
+vendor/dxvk/src/dxvk/dxvk_cs.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-277
+vendor/dxvk/src/d3d9/d3d9_interop.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-375
+vendor/dxvk/src/d3d9/d3d9_surface.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-259
+vendor/dxvk/generated/d3d9_convert_l6v5u5.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-125
+vendor/dxvk/generated/d3d9_convert_yuy2_uyvy.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-139
+vendor/dxvk/src/d3d9/d3d9_constant_buffer.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-139
+vendor/dxvk/src/d3d9/d3d9_names.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-237
+vendor/dxvk/src/d3d9/d3d9_main.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-120
+vendor/dxvk/src/d3d9/shaders/d3d9_convert_l6v5u5.comp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-43
+vendor/dxvk/src/dxvk/dxvk_dummy_frag.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 3-5
+vendor/dxvk/src/dxvk/dxvk_unbound.h
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 3-9
+vendor/dxvk/src/d3d9/d3d9_device.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-8995
+vendor/dxvk/src/d3d9/d3d9_util.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-360
+vendor/dxvk/src/d3d9/d3d9_bridge.cpp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-126
+vendor/dxvk/src/d3d9/shaders/d3d9_convert_a2w10v10u10.comp
+  s_ef7e2ce3136a21::t_08ee743f8c09a7 1-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8a25ba3b77978676713c4ccd1ca6d5774af4be92",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
