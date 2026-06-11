@@ -1165,7 +1165,19 @@ public:
     m_renderStates[D3DRS_DESTBLEND] = D3DBLEND_ZERO;
     m_renderStates[D3DRS_BLENDOP] = D3DBLENDOP_ADD;
     m_renderStates[D3DRS_COLORWRITEENABLE] = 0xF;
+    m_renderStates[D3DRS_COLORWRITEENABLE1] = 0xF;
+    m_renderStates[D3DRS_COLORWRITEENABLE2] = 0xF;
+    m_renderStates[D3DRS_COLORWRITEENABLE3] = 0xF;
     m_renderStates[D3DRS_ALPHAFUNC] = D3DCMP_ALWAYS;
+    for (UINT s = 0; s < 4; s++) {
+      m_vtxSamplerStates[s][D3DSAMP_ADDRESSU] = D3DTADDRESS_WRAP;
+      m_vtxSamplerStates[s][D3DSAMP_ADDRESSV] = D3DTADDRESS_WRAP;
+      m_vtxSamplerStates[s][D3DSAMP_ADDRESSW] = D3DTADDRESS_WRAP;
+      m_vtxSamplerStates[s][D3DSAMP_MAGFILTER] = D3DTEXF_POINT;
+      m_vtxSamplerStates[s][D3DSAMP_MINFILTER] = D3DTEXF_POINT;
+      m_vtxSamplerStates[s][D3DSAMP_MIPFILTER] = D3DTEXF_NONE;
+      m_vtxSamplerStates[s][D3DSAMP_MAXANISOTROPY] = 1;
+    }
   }
 
   HRESULT Init();
@@ -1559,11 +1571,11 @@ public:
   HRESULT STDMETHODCALLTYPE
   SetRenderTarget(DWORD RenderTargetIndex,
                   IDirect3DSurface9 *pRenderTarget) override {
-    if (RenderTargetIndex == 0 && pRenderTarget != m_rt0) {
+    if (RenderTargetIndex >= 4)
+      return D3DERR_INVALIDCALL;
+    if (pRenderTarget != m_rts[RenderTargetIndex]) {
       ClosePass();
-      m_rt0 = pRenderTarget;
-    } else if (RenderTargetIndex != 0 && pRenderTarget) {
-      STUB_ONCE("SetRenderTarget: MRT index > 0");
+      m_rts[RenderTargetIndex] = pRenderTarget;
     }
     return D3D_OK;
   }
@@ -1572,14 +1584,18 @@ public:
                   IDirect3DSurface9 **ppRenderTarget) override {
     if (!ppRenderTarget)
       return D3DERR_INVALIDCALL;
-    if (RenderTargetIndex != 0) {
+    if (RenderTargetIndex >= 4) {
       *ppRenderTarget = nullptr;
       return D3DERR_NOTFOUND;
     }
-    if (m_rt0) {
-      m_rt0->AddRef();
-      *ppRenderTarget = m_rt0;
+    if (m_rts[RenderTargetIndex]) {
+      m_rts[RenderTargetIndex]->AddRef();
+      *ppRenderTarget = m_rts[RenderTargetIndex];
       return D3D_OK;
+    }
+    if (RenderTargetIndex != 0) {
+      *ppRenderTarget = nullptr;
+      return D3DERR_NOTFOUND;
     }
     return GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, ppRenderTarget);
   }
@@ -1755,16 +1771,16 @@ public:
   }
   HRESULT STDMETHODCALLTYPE
   SetTexture(DWORD Stage, IDirect3DBaseTexture9 *pTexture) override {
-    if (Stage >= MAX_SAMPLERS) {
-      STUB_ONCE("SetTexture: vertex/displacement sampler");
-      return D3D_OK;
-    }
     if (pTexture && pTexture->GetType() != D3DRTYPE_TEXTURE) {
       STUB_ONCE("SetTexture: non-2D texture");
-      m_textures[Stage] = nullptr;
-      return D3D_OK;
+      pTexture = nullptr;
     }
-    m_textures[Stage] = static_cast<D9MTTexture *>(pTexture);
+    if (Stage < MAX_SAMPLERS)
+      m_textures[Stage] = static_cast<D9MTTexture *>(pTexture);
+    else if (Stage >= D3DVERTEXTEXTURESAMPLER0 &&
+             Stage <= D3DVERTEXTEXTURESAMPLER3)
+      m_vtxTextures[Stage - D3DVERTEXTEXTURESAMPLER0] =
+          static_cast<D9MTTexture *>(pTexture);
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
@@ -1792,8 +1808,13 @@ public:
   HRESULT STDMETHODCALLTYPE SetSamplerState(DWORD Sampler,
                                             D3DSAMPLERSTATETYPE Type,
                                             DWORD Value) override {
-    if (Sampler < MAX_SAMPLERS && Type < MAX_SAMPLER_STATES)
+    if (Type >= MAX_SAMPLER_STATES)
+      return D3D_OK;
+    if (Sampler < MAX_SAMPLERS)
       m_samplerStates[Sampler][Type] = Value;
+    else if (Sampler >= D3DVERTEXTEXTURESAMPLER0 &&
+             Sampler <= D3DVERTEXTEXTURESAMPLER3)
+      m_vtxSamplerStates[Sampler - D3DVERTEXTEXTURESAMPLER0][Type] = Value;
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE ValidateDevice(DWORD *pNumPasses) override {
@@ -2277,10 +2298,11 @@ private:
   // drawable. colorTex==0 means the swapchain drawable.
   struct PassRec {
     bool isBlit = false;
-    bool srgbBB = false;       // proxy pass writes through the sRGB view
-    obj_handle_t colorTex = 0; // 0 = backbuffer proxy texture
-    uint16_t colorLevel = 0;
-    uint32_t colorFmt = WMTPixelFormatBGRA8Unorm;
+    bool srgbBB = false; // proxy slot-0 writes through the sRGB view
+    UINT numColors = 1;
+    obj_handle_t colorTex[4] = {}; // [0]==0 = backbuffer proxy texture
+    uint16_t colorLevel[4] = {};
+    uint32_t colorFmt[4] = {WMTPixelFormatBGRA8Unorm, 0, 0, 0};
     obj_handle_t depthTex = 0; // 0 = device default (or size-matched cache)
     UINT width = 0, height = 0;
     bool clearColor = false;
@@ -2329,14 +2351,17 @@ private:
     void *vs;
     void *ps;
     void *decl;
-    uint32_t blend; // packed blend + color-write state
-    uint32_t rtFmt; // render target pixel format
+    uint32_t blend;  // packed blend + color-write state
+    uint64_t rtFmts; // render target pixel formats, 16 bits each
   };
   std::vector<std::pair<PsoKey, obj_handle_t>> m_psoCache;
 
   // --- textures + samplers ---
   D9MTTexture *m_textures[MAX_SAMPLERS] = {}; // not ref'd (MVP, like m_vs/m_ps)
   DWORD m_samplerStates[MAX_SAMPLERS][MAX_SAMPLER_STATES] = {};
+  // vertex texture samplers (D3DVERTEXTEXTURESAMPLER0..3 = 257..260)
+  D9MTTexture *m_vtxTextures[4] = {};
+  DWORD m_vtxSamplerStates[4][MAX_SAMPLER_STATES] = {};
 
   // one MTLSamplerState per distinct D3D9 sampler state vector; its
   // gpu_resource_id lives at heapIndex in the static sampler heap region
@@ -2358,7 +2383,7 @@ private:
   // --- surfaces handed to the app ---
   D9MTPlainSurface *m_backBuffer = nullptr; // owned (one app ref each Get)
   D9MTPlainSurface *m_autoDepth = nullptr;  // owned
-  IDirect3DSurface9 *m_rt0 = nullptr;       // borrowed, set by the app
+  IDirect3DSurface9 *m_rts[4] = {};         // borrowed, set by the app
   IDirect3DSurface9 *m_dsSurface = nullptr; // borrowed
 
   // --- render states, depth, viewport/scissor ---
@@ -2418,7 +2443,7 @@ private:
   HRESULT CompileShader(const DWORD *pFunction, D9MTShaderData &data);
   obj_handle_t GetOrCreatePso();
   obj_handle_t GetOrCreateDsso();
-  uint32_t GetOrCreateSampler(UINT slot);
+  uint32_t GetOrCreateSampler(const DWORD *samplerStates);
   void MarkResident(obj_handle_t res);
   bool PrepareDraw();
   void OpenPass();
@@ -2760,34 +2785,48 @@ obj_handle_t D9MTDevice::GetOrCreatePso() {
       (m_renderStates[D3DRS_BLENDOP] & 7) << 11 |
       (m_renderStates[D3DRS_COLORWRITEENABLE] & 0xF) << 14;
 
-  uint32_t rtFmt = m_passOpen ? m_curPass.colorFmt : WMTPixelFormatBGRA8Unorm;
-  PsoKey key{m_vs, m_ps, m_vdecl, blendKey, rtFmt};
+  UINT numColors = m_passOpen ? m_curPass.numColors : 1;
+  uint64_t rtFmts = 0;
+  for (UINT i = 0; i < numColors; i++)
+    rtFmts |= (uint64_t)(m_passOpen ? m_curPass.colorFmt[i]
+                                    : WMTPixelFormatBGRA8Unorm)
+              << (i * 16);
+  PsoKey key{m_vs, m_ps, m_vdecl, blendKey, rtFmts};
   for (auto &e : m_psoCache)
     if (e.first.vs == key.vs && e.first.ps == key.ps &&
         e.first.decl == key.decl && e.first.blend == key.blend &&
-        e.first.rtFmt == key.rtFmt)
+        e.first.rtFmts == key.rtFmts)
       return e.second;
 
   struct d9mt_pso_info info;
   memset(&info, 0, sizeof(info));
   info.vertex_function = m_vs->m_data.function;
   info.fragment_function = m_ps->m_data.function;
-  info.colors[0].pixel_format = rtFmt;
-  info.colors[0].write_mask =
-      d3dwritemask_to_mtl(m_renderStates[D3DRS_COLORWRITEENABLE]);
-  info.colors[0].blending_enabled = blendOn;
-  if (blendOn) {
-    uint32_t src = d3dblend_to_mtl(m_renderStates[D3DRS_SRCBLEND]);
-    uint32_t dst = d3dblend_to_mtl(m_renderStates[D3DRS_DESTBLEND]);
-    uint32_t op = d3dblendop_to_mtl(m_renderStates[D3DRS_BLENDOP]);
-    info.colors[0].src_rgb_blend_factor = src;
-    info.colors[0].dst_rgb_blend_factor = dst;
-    info.colors[0].rgb_blend_op = op;
-    // separate alpha blend (D3DRS_SEPARATEALPHABLENDENABLE) comes later;
-    // alpha follows the color factors like D3D9 without it
-    info.colors[0].src_alpha_blend_factor = src;
-    info.colors[0].dst_alpha_blend_factor = dst;
-    info.colors[0].alpha_blend_op = op;
+  // per-MRT write masks: COLORWRITEENABLE, then COLORWRITEENABLE1..3
+  static const D3DRENDERSTATETYPE kWriteRS[4] = {
+      D3DRS_COLORWRITEENABLE, D3DRS_COLORWRITEENABLE1,
+      D3DRS_COLORWRITEENABLE2, D3DRS_COLORWRITEENABLE3};
+  for (UINT i = 0; i < numColors; i++) {
+    uint32_t fmt = (uint32_t)(rtFmts >> (i * 16)) & 0xFFFF;
+    if (!fmt)
+      continue;
+    info.colors[i].pixel_format = fmt;
+    info.colors[i].write_mask =
+        d3dwritemask_to_mtl(m_renderStates[kWriteRS[i]]);
+    info.colors[i].blending_enabled = blendOn;
+    if (blendOn) {
+      uint32_t src = d3dblend_to_mtl(m_renderStates[D3DRS_SRCBLEND]);
+      uint32_t dst = d3dblend_to_mtl(m_renderStates[D3DRS_DESTBLEND]);
+      uint32_t op = d3dblendop_to_mtl(m_renderStates[D3DRS_BLENDOP]);
+      info.colors[i].src_rgb_blend_factor = src;
+      info.colors[i].dst_rgb_blend_factor = dst;
+      info.colors[i].rgb_blend_op = op;
+      // separate alpha blend (D3DRS_SEPARATEALPHABLENDENABLE) comes
+      // later; alpha follows the color factors like D3D9 without it
+      info.colors[i].src_alpha_blend_factor = src;
+      info.colors[i].dst_alpha_blend_factor = dst;
+      info.colors[i].alpha_blend_op = op;
+    }
   }
   info.depth_pixel_format = WMTPixelFormatDepth32Float_Stencil8;
   info.stencil_pixel_format = WMTPixelFormatDepth32Float_Stencil8;
@@ -2871,10 +2910,9 @@ static WMTSamplerAddressMode d3d_address_to_wmt(DWORD mode) {
   }
 }
 
-// MTLSamplerState for the slot's current D3D9 sampler states, deduped on
-// the packed state vector. Returns the heap index shaders use.
-uint32_t D9MTDevice::GetOrCreateSampler(UINT slot) {
-  const DWORD *ss = m_samplerStates[slot];
+// MTLSamplerState for a D3D9 sampler state vector, deduped on the packed
+// state. Returns the heap index shaders use.
+uint32_t D9MTDevice::GetOrCreateSampler(const DWORD *ss) {
   uint64_t key = (uint64_t)(ss[D3DSAMP_ADDRESSU] & 7) |
                  (uint64_t)(ss[D3DSAMP_ADDRESSV] & 7) << 3 |
                  (uint64_t)(ss[D3DSAMP_ADDRESSW] & 7) << 6 |
@@ -3024,28 +3062,37 @@ void D9MTDevice::OpenPass() {
   m_curPass.height = m_height;
 
   bool srgbWrite = m_renderStates[D3DRS_SRGBWRITEENABLE] != 0;
-  D9MTSurface *rts = nullptr;
-  if (m_rt0)
-    m_rt0->QueryInterface(IID_D9MTTexSurface, (void **)&rts);
-  if (rts && !rts->Parent()->IsDepth()) {
-    D9MTTexture *tex = rts->Parent();
-    m_curPass.colorTex = tex->m_tex;
-    m_curPass.colorLevel = (uint16_t)rts->Level();
-    m_curPass.colorFmt = tex->FmtInfo().wmt;
-    if (srgbWrite) {
-      obj_handle_t sv = tex->SrgbViewHandle();
-      if (sv) {
-        m_curPass.colorTex = sv;
-        m_curPass.colorFmt = wmt_srgb_variant(tex->FmtInfo().wmt);
+  m_curPass.numColors = 1;
+  for (UINT i = 0; i < 4; i++) {
+    if (i > 0 && !m_rts[i])
+      continue;
+    D9MTSurface *rts = nullptr;
+    if (m_rts[i])
+      m_rts[i]->QueryInterface(IID_D9MTTexSurface, (void **)&rts);
+    if (rts && !rts->Parent()->IsDepth()) {
+      D9MTTexture *tex = rts->Parent();
+      m_curPass.colorTex[i] = tex->m_tex;
+      m_curPass.colorLevel[i] = (uint16_t)rts->Level();
+      m_curPass.colorFmt[i] = tex->FmtInfo().wmt;
+      if (srgbWrite) {
+        obj_handle_t sv = tex->SrgbViewHandle();
+        if (sv) {
+          m_curPass.colorTex[i] = sv;
+          m_curPass.colorFmt[i] = wmt_srgb_variant(tex->FmtInfo().wmt);
+        }
       }
-    }
-    m_curPass.width = tex->LevelWidth(rts->Level());
-    m_curPass.height = tex->LevelHeight(rts->Level());
-  } else {
-    // backbuffer / placeholder -> proxy (colorTex 0)
-    if (srgbWrite && m_bbTexSrgb) {
-      m_curPass.srgbBB = true;
-      m_curPass.colorFmt = WMTPixelFormatBGRA8Unorm_sRGB;
+      if (i == 0) {
+        m_curPass.width = tex->LevelWidth(rts->Level());
+        m_curPass.height = tex->LevelHeight(rts->Level());
+      }
+      if (i + 1 > m_curPass.numColors)
+        m_curPass.numColors = i + 1;
+    } else if (i == 0) {
+      // backbuffer / placeholder -> proxy (colorTex[0] = 0)
+      if (srgbWrite && m_bbTexSrgb) {
+        m_curPass.srgbBB = true;
+        m_curPass.colorFmt[0] = WMTPixelFormatBGRA8Unorm_sRGB;
+      }
     }
   }
 
@@ -3215,23 +3262,22 @@ bool D9MTDevice::PrepareDraw() {
     }
   }
 
-  // render_state push block, shared by both stages
-  UINT rsOff = 0;
-  auto *rs = (D9MTRenderStateBlock *)RingAlloc(sizeof(D9MTRenderStateBlock),
-                                               &rsOff);
-  if (!rs)
-    return false;
-  memset(rs, 0, sizeof(*rs));
-  rs->point_size = 1.0f;
-  rs->point_size_min = 1.0f;
-  rs->point_size_max = 64.0f;
-  // per-slot sampler heap indices, filled from the shaders' texture
-  // bindings below and packed two u16 per dword at the end
-  uint16_t samplerIdx[MAX_SAMPLERS] = {};
-
   for (int stage = 0; stage < 2; stage++) {
     const D9MTShaderData &sh = stage ? m_ps->m_data : m_vs->m_data;
     const D9MTShaderInfo &si = sh.info;
+
+    // per-stage render_state block: same content except the sampler heap
+    // index words, which are packed from this stage's own bindings
+    UINT rsOff = 0;
+    auto *rs = (D9MTRenderStateBlock *)RingAlloc(sizeof(D9MTRenderStateBlock),
+                                                 &rsOff);
+    if (!rs)
+      return false;
+    memset(rs, 0, sizeof(*rs));
+    rs->point_size = 1.0f;
+    rs->point_size_min = 1.0f;
+    rs->point_size_max = 64.0f;
+    uint16_t samplerIdx[MAX_SAMPLERS] = {};
 
     UINT cbOff = 0;
     if (si.idCbuffer >= 0) {
@@ -3274,18 +3320,22 @@ bool D9MTDevice::PrepareDraw() {
         ab[si.idSpecState] = m_ring.gpuAddr + specOff;
       }
       for (const auto &tb : si.textures) {
-        if (!stage) {
-          STUB_ONCE("vertex texture fetch");
-          continue;
+        // PS samplers s0-s15; VS samplers s0-s3 = D3DVERTEXTEXTURESAMPLERn
+        D9MTTexture *tex = nullptr;
+        const DWORD *ss = nullptr;
+        if (stage && tb.samplerSlot < MAX_SAMPLERS) {
+          tex = m_textures[tb.samplerSlot];
+          ss = m_samplerStates[tb.samplerSlot];
+        } else if (!stage && tb.samplerSlot < 4) {
+          tex = m_vtxTextures[tb.samplerSlot];
+          ss = m_vtxSamplerStates[tb.samplerSlot];
         }
-        D9MTTexture *tex =
-            tb.samplerSlot < MAX_SAMPLERS ? m_textures[tb.samplerSlot] : nullptr;
         if (!tex)
           continue; // slot empty: shader reads a null texture handle
         // the handle lands in both the plain and _shadow variants; the
         // spec_state-selected branch decides which one executes
         uint64_t gid = tex->m_gpuId;
-        if (m_samplerStates[tb.samplerSlot][D3DSAMP_SRGBTEXTURE]) {
+        if (ss[D3DSAMP_SRGBTEXTURE]) {
           uint64_t sg = tex->SrgbGpuId();
           if (sg)
             gid = sg;
@@ -3293,8 +3343,7 @@ bool D9MTDevice::PrepareDraw() {
         ab[tb.abId] = gid;
         MarkResident(gid == tex->m_gpuId ? tex->SampleHandle()
                                          : tex->SrgbViewHandle());
-        samplerIdx[tb.samplerSlot] =
-            (uint16_t)GetOrCreateSampler(tb.samplerSlot);
+        samplerIdx[tb.samplerSlot] = (uint16_t)GetOrCreateSampler(ss);
       }
 
       auto *sb = AppendCmd<wmtcmd_render_setbuffer>(
@@ -3322,11 +3371,11 @@ bool D9MTDevice::PrepareDraw() {
       sb->offset = m_samplerHeapOffset;
       sb->index = (uint8_t)si.samplerHeapIndex;
     }
-  }
 
-  for (uint32_t k = 0; k < 8; k++)
-    rs->sampler_idx[k] =
-        ((uint32_t)samplerIdx[2 * k + 1] << 16) | samplerIdx[2 * k];
+    for (uint32_t k = 0; k < 8; k++)
+      rs->sampler_idx[k] =
+          ((uint32_t)samplerIdx[2 * k + 1] << 16) | samplerIdx[2 * k];
+  }
 
   // vertex streams
   for (UINT s = 0; s < MAX_STREAMS; s++) {
@@ -3502,20 +3551,25 @@ HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
       return;
     }
     WMTRenderPassInfo pass = {};
-    bool toBB = p.colorTex == 0; // "backbuffer" = the proxy texture
-    pass.colors[0].texture =
-        toBB ? (p.srgbBB ? m_bbTexSrgb : m_bbTex) : p.colorTex;
-    pass.colors[0].level = p.colorLevel;
-    pass.colors[0].store_action = WMTStoreActionStore;
-    if (p.clearColor) {
-      pass.colors[0].load_action = WMTLoadActionClear;
-      pass.colors[0].clear_color.r = ((p.clearColorVal >> 16) & 0xff) / 255.0;
-      pass.colors[0].clear_color.g = ((p.clearColorVal >> 8) & 0xff) / 255.0;
-      pass.colors[0].clear_color.b = (p.clearColorVal & 0xff) / 255.0;
-      pass.colors[0].clear_color.a = ((p.clearColorVal >> 24) & 0xff) / 255.0;
-    } else {
-      // proxy contents persist across frames; always preserve
-      pass.colors[0].load_action = WMTLoadActionLoad;
+    bool toBB = p.colorTex[0] == 0; // "backbuffer" = the proxy texture
+    for (UINT i = 0; i < p.numColors; i++) {
+      if (i > 0 && !p.colorTex[i])
+        continue;
+      pass.colors[i].texture =
+          (i == 0 && toBB) ? (p.srgbBB ? m_bbTexSrgb : m_bbTex)
+                           : p.colorTex[i];
+      pass.colors[i].level = p.colorLevel[i];
+      pass.colors[i].store_action = WMTStoreActionStore;
+      if (p.clearColor) {
+        pass.colors[i].load_action = WMTLoadActionClear;
+        pass.colors[i].clear_color.r = ((p.clearColorVal >> 16) & 0xff) / 255.0;
+        pass.colors[i].clear_color.g = ((p.clearColorVal >> 8) & 0xff) / 255.0;
+        pass.colors[i].clear_color.b = (p.clearColorVal & 0xff) / 255.0;
+        pass.colors[i].clear_color.a = ((p.clearColorVal >> 24) & 0xff) / 255.0;
+      } else {
+        // contents persist across passes/frames; always preserve
+        pass.colors[i].load_action = WMTLoadActionLoad;
+      }
     }
     obj_handle_t depth =
         p.depthTex ? p.depthTex : GetDepthForSize(p.width, p.height);
