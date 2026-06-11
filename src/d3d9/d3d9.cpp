@@ -227,7 +227,29 @@ static bool d3dfmt_to_wmt(D3DFORMAT fmt, D9MTFormatInfo *out) {
   case D3DFMT_DXT3:          return plain(WMTPixelFormatBC2_RGBA, 16, 4);
   case D3DFMT_DXT4:
   case D3DFMT_DXT5:          return plain(WMTPixelFormatBC3_RGBA, 16, 4);
+  // depth formats (Apple silicon has no D24: promote to D32F variants)
+  case D3DFMT_D16:           return plain(WMTPixelFormatDepth32Float, 4);
+  case D3DFMT_D32:
+  case D3DFMT_D32F_LOCKABLE: return plain(WMTPixelFormatDepth32Float, 4);
+  case D3DFMT_D24S8:
+  case D3DFMT_D24X8:
+  case D3DFMT_D24FS8:
+    return plain(WMTPixelFormatDepth32Float_Stencil8, 5);
   default:                   return false;
+  }
+}
+
+static bool d3dfmt_is_depth(D3DFORMAT fmt) {
+  switch ((DWORD)fmt) {
+  case D3DFMT_D16:
+  case D3DFMT_D32:
+  case D3DFMT_D32F_LOCKABLE:
+  case D3DFMT_D24S8:
+  case D3DFMT_D24X8:
+  case D3DFMT_D24FS8:
+    return true;
+  default:
+    return false;
   }
 }
 
@@ -520,7 +542,7 @@ public:
   }
   ~D9MTTexture();
 
-  bool Create(obj_handle_t mtlDevice) {
+  bool Create(obj_handle_t mtlDevice, DWORD d3dUsage = 0) {
     WMTTextureInfo info = {};
     info.pixel_format = (WMTPixelFormat)m_fmtInfo.wmt;
     info.width = m_width;
@@ -534,6 +556,13 @@ public:
     if (m_fmtInfo.swizzled)
       info.usage = (WMTTextureUsage)(info.usage | WMTTextureUsagePixelFormatView);
     info.options = WMTResourceStorageModeShared;
+    if (d3dUsage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL))
+      info.usage = (WMTTextureUsage)(info.usage | WMTTextureUsageRenderTarget);
+    if (d3dfmt_is_depth(m_format)) {
+      // depth textures can't be shared-storage; no CPU staging uploads
+      info.options = WMTResourceStorageModePrivate;
+      m_noUpload = true;
+    }
     m_tex = MTLDevice_newTexture(mtlDevice, &info);
     if (!m_tex)
       return false;
@@ -657,6 +686,8 @@ public:
   HRESULT STDMETHODCALLTYPE UnlockRect(UINT Level) override {
     if (Level >= m_levels || !m_tex)
       return D3DERR_INVALIDCALL;
+    if (m_noUpload) // private storage (depth/RT): nothing to upload
+      return D3D_OK;
     WMTOrigin origin = {0, 0, 0};
     WMTSize size = {LevelWidth(Level), LevelHeight(Level), 1};
     WMTMemoryPointer data;
@@ -672,6 +703,7 @@ public:
   obj_handle_t m_tex = 0;
   obj_handle_t m_view = 0; // swizzled view, when the format needs one
   uint64_t m_gpuId = 0;    // of the handle shaders sample (view if present)
+  bool m_noUpload = false; // private storage: UnlockRect skips replaceRegion
 
 private:
   volatile LONG m_refcount = 1;
@@ -846,6 +878,160 @@ private:
   D3DSURFACE_DESC m_desc;
 };
 
+// The implicit swapchain: thin view over the device's single swapchain
+// pass. Owned by the device, one app ref per GetSwapChain.
+class D9MTSwapChain final : public IDirect3DSwapChain9Ex {
+public:
+  D9MTSwapChain(IDirect3DDevice9Ex *dev, const D3DPRESENT_PARAMETERS &pp)
+      : m_device(dev), m_pp(pp) {}
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+    if (!ppv)
+      return E_POINTER;
+    *ppv = this;
+    AddRef();
+    return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return InterlockedIncrement(&m_refcount);
+  }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG r = InterlockedDecrement(&m_refcount);
+    if (!r)
+      delete this;
+    return r;
+  }
+
+  HRESULT STDMETHODCALLTYPE Present(const RECT *src, const RECT *dst,
+                                    HWND hwnd, const RGNDATA *dirty,
+                                    DWORD flags) override {
+    return m_device->Present(src, dst, hwnd, dirty);
+  }
+  HRESULT STDMETHODCALLTYPE
+  GetFrontBufferData(IDirect3DSurface9 *pDestSurface) override {
+    STUB_ONCE("SwapChain::GetFrontBufferData");
+    return D3DERR_NOTAVAILABLE;
+  }
+  HRESULT STDMETHODCALLTYPE
+  GetBackBuffer(UINT iBackBuffer, D3DBACKBUFFER_TYPE Type,
+                IDirect3DSurface9 **ppBackBuffer) override {
+    return m_device->GetBackBuffer(0, iBackBuffer, Type, ppBackBuffer);
+  }
+  HRESULT STDMETHODCALLTYPE
+  GetRasterStatus(D3DRASTER_STATUS *pRasterStatus) override {
+    return m_device->GetRasterStatus(0, pRasterStatus);
+  }
+  HRESULT STDMETHODCALLTYPE GetDisplayMode(D3DDISPLAYMODE *pMode) override {
+    return m_device->GetDisplayMode(0, pMode);
+  }
+  HRESULT STDMETHODCALLTYPE GetDevice(IDirect3DDevice9 **ppDevice) override {
+    if (!ppDevice)
+      return D3DERR_INVALIDCALL;
+    m_device->AddRef();
+    *ppDevice = m_device;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE
+  GetPresentParameters(D3DPRESENT_PARAMETERS *pp) override {
+    if (!pp)
+      return D3DERR_INVALIDCALL;
+    *pp = m_pp;
+    return D3D_OK;
+  }
+
+  // IDirect3DSwapChain9Ex
+  HRESULT STDMETHODCALLTYPE GetLastPresentCount(UINT *pCount) override {
+    if (pCount)
+      *pCount = 0;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE
+  GetPresentStats(D3DPRESENTSTATS *pStats) override {
+    if (pStats)
+      memset(pStats, 0, sizeof(*pStats));
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE
+  GetDisplayModeEx(D3DDISPLAYMODEEX *pMode,
+                   D3DDISPLAYROTATION *pRotation) override {
+    if (pMode) {
+      pMode->Size = sizeof(*pMode);
+      pMode->Width = m_pp.BackBufferWidth;
+      pMode->Height = m_pp.BackBufferHeight;
+      pMode->RefreshRate = 60;
+      pMode->Format = D3DFMT_X8R8G8B8;
+      pMode->ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
+    }
+    if (pRotation)
+      *pRotation = D3DDISPLAYROTATION_IDENTITY;
+    return D3D_OK;
+  }
+
+  D3DPRESENT_PARAMETERS m_pp;
+
+private:
+  volatile LONG m_refcount = 1;
+  IDirect3DDevice9Ex *m_device;
+};
+
+// Queries: Present blocks on waitUntilCompleted, so by the time anything
+// asks, the GPU is idle - every query completes immediately.
+class D9MTQuery final : public IDirect3DQuery9 {
+public:
+  D9MTQuery(IDirect3DDevice9 *dev, D3DQUERYTYPE type)
+      : m_device(dev), m_type(type) {}
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+    if (!ppv)
+      return E_POINTER;
+    *ppv = this;
+    AddRef();
+    return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return InterlockedIncrement(&m_refcount);
+  }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG r = InterlockedDecrement(&m_refcount);
+    if (!r)
+      delete this;
+    return r;
+  }
+  HRESULT STDMETHODCALLTYPE GetDevice(IDirect3DDevice9 **ppDevice) override {
+    if (!ppDevice)
+      return D3DERR_INVALIDCALL;
+    m_device->AddRef();
+    *ppDevice = m_device;
+    return D3D_OK;
+  }
+  D3DQUERYTYPE STDMETHODCALLTYPE GetType() override { return m_type; }
+  DWORD STDMETHODCALLTYPE GetDataSize() override {
+    switch (m_type) {
+    case D3DQUERYTYPE_EVENT:     return sizeof(BOOL);
+    case D3DQUERYTYPE_OCCLUSION: return sizeof(DWORD);
+    default:                     return 0;
+    }
+  }
+  HRESULT STDMETHODCALLTYPE Issue(DWORD dwIssueFlags) override {
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetData(void *pData, DWORD dwSize,
+                                    DWORD dwGetDataFlags) override {
+    if (pData && dwSize) {
+      memset(pData, 0, dwSize);
+      if (m_type == D3DQUERYTYPE_EVENT && dwSize >= sizeof(BOOL))
+        *(BOOL *)pData = TRUE;
+      // occlusion: 0 samples passed (no per-draw counters yet)
+    }
+    return S_OK;
+  }
+
+private:
+  volatile LONG m_refcount = 1;
+  IDirect3DDevice9 *m_device;
+  D3DQUERYTYPE m_type;
+};
+
 // ---------------------------------------------------------------------------
 // device
 // ---------------------------------------------------------------------------
@@ -861,6 +1047,7 @@ static constexpr UINT VERTEX_STRIDE = sizeof(D9MTVertex); // 20
 class D9MTInterface;
 
 class D9MTDevice final : public IDirect3DDevice9Ex {
+  friend class D9MTInterface; // CreateDevice seeds m_pp
 public:
   D9MTDevice(D9MTInterface *parent, HWND hwnd, UINT width, UINT height)
       : m_parent(parent), m_hwnd(hwnd), m_width(width), m_height(height) {
@@ -952,8 +1139,17 @@ public:
   }
   HRESULT STDMETHODCALLTYPE
   GetSwapChain(UINT iSwapChain, IDirect3DSwapChain9 **ppSwapChain) override {
-    STUB_ONCE("GetSwapChain");
-    return D3DERR_NOTAVAILABLE;
+    if (!ppSwapChain)
+      return D3DERR_INVALIDCALL;
+    if (iSwapChain != 0) {
+      *ppSwapChain = nullptr;
+      return D3DERR_INVALIDCALL;
+    }
+    if (!m_swapChain)
+      m_swapChain = new D9MTSwapChain(this, m_pp);
+    m_swapChain->AddRef();
+    *ppSwapChain = m_swapChain;
+    return D3D_OK;
   }
   UINT STDMETHODCALLTYPE GetNumberOfSwapChains() override { return 1; }
   HRESULT STDMETHODCALLTYPE Reset(D3DPRESENT_PARAMETERS *pp) override {
@@ -1008,12 +1204,10 @@ public:
       log_msg("CreateTexture: unsupported format %u", (unsigned)Format);
       return D3DERR_NOTAVAILABLE;
     }
-    if (Usage & D3DUSAGE_RENDERTARGET) {
-      STUB_ONCE("CreateTexture: render target");
-      return D3DERR_NOTAVAILABLE;
-    }
+    if (Usage & D3DUSAGE_RENDERTARGET)
+      STUB_ONCE("CreateTexture: render target (no draw redirection yet)");
     D9MTTexture *tex = new D9MTTexture(this, Width, Height, Levels, Format, fi);
-    if (!tex->Create(m_mtlDevice)) {
+    if (!tex->Create(m_mtlDevice, Usage)) {
       log_msg("CreateTexture: newTexture failed (%ux%u fmt %u)", Width, Height,
               (unsigned)Format);
       tex->Release();
@@ -1703,8 +1897,14 @@ public:
   }
   HRESULT STDMETHODCALLTYPE CreateQuery(D3DQUERYTYPE Type,
                                         IDirect3DQuery9 **ppQuery) override {
-    STUB_ONCE("CreateQuery");
-    return D3DERR_NOTAVAILABLE;
+    if (Type != D3DQUERYTYPE_EVENT && Type != D3DQUERYTYPE_OCCLUSION) {
+      STUB_ONCE("CreateQuery: unsupported type");
+      return D3DERR_NOTAVAILABLE;
+    }
+    if (!ppQuery) // capability probe
+      return D3D_OK;
+    *ppQuery = new D9MTQuery(this, Type);
+    return D3D_OK;
   }
 
   // IDirect3DDevice9Ex
@@ -1878,6 +2078,9 @@ private:
   // textures made resident this frame (their MTLTextures live outside the
   // ring, so each needs its own UseResource)
   std::vector<obj_handle_t> m_frameResident;
+
+  D3DPRESENT_PARAMETERS m_pp = {}; // as passed to CreateDevice
+  D9MTSwapChain *m_swapChain = nullptr; // owned (one app ref per Get)
 
   // --- surfaces handed to the app ---
   D9MTPlainSurface *m_backBuffer = nullptr; // owned (one app ref each Get)
@@ -2109,6 +2312,8 @@ D9MTDevice::~D9MTDevice() {
     NSObject_release(s.handle);
   for (auto &d : m_dssoCache)
     NSObject_release(d.handle);
+  if (m_swapChain)
+    m_swapChain->Release();
   if (m_backBuffer)
     m_backBuffer->Release();
   if (m_autoDepth)
@@ -2949,6 +3154,9 @@ public:
       height = 480;
 
     D9MTDevice *dev = new D9MTDevice(this, hwnd, width, height);
+    dev->m_pp = *pp;
+    dev->m_pp.BackBufferWidth = width;
+    dev->m_pp.BackBufferHeight = height;
     HRESULT hr = dev->Init();
     if (FAILED(hr)) {
       dev->Release();
