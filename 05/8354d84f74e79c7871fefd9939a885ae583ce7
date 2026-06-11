@@ -1,0 +1,26 @@
+src/d3d9/d3d9.cpp
+  s_ef7e2ce3136a21::t_f90ecced38b194 1225-1228
+  s_ef7e2ce3136a21::t_8c3588ed8bf0fc 3300-3303,3309,3312
+tools/translate-test.cpp
+  s_ef7e2ce3136a21::t_852bcce01f1beb 27-28
+src/d3d9/d9mt_translate.cpp
+  s_ef7e2ce3136a21::t_f7a5847119fe60 57-61
+src/d3d9/d9mt_translate.h
+  s_ef7e2ce3136a21::t_d4d7b8a70d1782 43-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "058354d84f74e79c7871fefd9939a885ae583ce7",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
