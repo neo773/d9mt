@@ -227,21 +227,21 @@ static bool d3dfmt_to_wmt(D3DFORMAT fmt, D9MTFormatInfo *out) {
   case D3DFMT_DXT3:          return plain(WMTPixelFormatBC2_RGBA, 16, 4);
   case D3DFMT_DXT4:
   case D3DFMT_DXT5:          return plain(WMTPixelFormatBC3_RGBA, 16, 4);
-  // depth formats (Apple silicon has no D24: promote to D32F variants)
-  case D3DFMT_D16:           return plain(WMTPixelFormatDepth32Float, 4);
+  // depth formats. ALL map to Depth32Float_Stencil8 so passes and PSOs
+  // share one depth/stencil pixel format regardless of which D3D9 depth
+  // surface is bound (Apple silicon has no D24 anyway).
+  case D3DFMT_D16:
   case D3DFMT_D32:
-  case D3DFMT_D32F_LOCKABLE: return plain(WMTPixelFormatDepth32Float, 4);
+  case D3DFMT_D32F_LOCKABLE:
   case D3DFMT_D24S8:
   case D3DFMT_D24X8:
   case D3DFMT_D24FS8:
-    return plain(WMTPixelFormatDepth32Float_Stencil8, 5);
-  // vendor-hack FOURCCs (sampleable depth + dummy RT), used by GTA IV
+  // vendor-hack FOURCCs (sampleable depth), used by GTA IV shadows
   case MAKEFOURCC('I', 'N', 'T', 'Z'):
   case MAKEFOURCC('R', 'A', 'W', 'Z'):
-    return plain(WMTPixelFormatDepth32Float_Stencil8, 5);
   case MAKEFOURCC('D', 'F', '1', '6'):
   case MAKEFOURCC('D', 'F', '2', '4'):
-    return plain(WMTPixelFormatDepth32Float, 4);
+    return plain(WMTPixelFormatDepth32Float_Stencil8, 5);
   case MAKEFOURCC('N', 'U', 'L', 'L'): // dummy color RT, never sampled
     return plain(WMTPixelFormatRGBA8Unorm, 4);
   default:                   return false;
@@ -267,6 +267,12 @@ static bool d3dfmt_is_depth(D3DFORMAT fmt) {
 }
 
 class D9MTDevice;
+
+// internal QI tag: identifies our texture-level surface so SetRenderTarget
+// can pull the Metal texture back out (returns the object WITHOUT AddRef)
+static const GUID IID_D9MTTexSurface = {
+    0xd94d7001, 0x0000, 0x0000,
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
 
 class D9MTVertexDeclaration final : public IDirect3DVertexDeclaration9 {
 public:
@@ -594,6 +600,8 @@ public:
 
   // what PrepareDraw binds: the swizzled view when there is one
   obj_handle_t SampleHandle() const { return m_view ? m_view : m_tex; }
+  const D9MTFormatInfo &FmtInfo() const { return m_fmtInfo; }
+  bool IsDepth() const { return d3dfmt_is_depth(m_format); }
 
   UINT LevelWidth(UINT l) const { return m_width >> l ? m_width >> l : 1; }
   UINT LevelHeight(UINT l) const { return m_height >> l ? m_height >> l : 1; }
@@ -736,9 +744,16 @@ public:
   D9MTSurface(D9MTTexture *parent, UINT level)
       : m_parent(parent), m_level(level) {}
 
+  D9MTTexture *Parent() const { return m_parent; }
+  UINT Level() const { return m_level; }
+
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
     if (!ppv)
       return E_POINTER;
+    if (riid == IID_D9MTTexSurface) { // internal tag, no AddRef
+      *ppv = this;
+      return S_OK;
+    }
     *ppv = this;
     AddRef();
     return S_OK;
@@ -825,6 +840,10 @@ public:
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
     if (!ppv)
       return E_POINTER;
+    if (riid == IID_D9MTTexSurface) { // not a texture surface
+      *ppv = nullptr;
+      return E_NOINTERFACE;
+    }
     *ppv = this;
     AddRef();
     return S_OK;
@@ -1166,7 +1185,63 @@ public:
   }
   UINT STDMETHODCALLTYPE GetNumberOfSwapChains() override { return 1; }
   HRESULT STDMETHODCALLTYPE Reset(D3DPRESENT_PARAMETERS *pp) override {
-    STUB_ONCE("Reset");
+    if (!pp)
+      return D3DERR_INVALIDCALL;
+    UINT w = pp->BackBufferWidth ? pp->BackBufferWidth : m_width;
+    UINT h = pp->BackBufferHeight ? pp->BackBufferHeight : m_height;
+    log_msg("Reset: %ux%u windowed=%d", w, h, pp->Windowed);
+    m_pp = *pp;
+    m_pp.BackBufferWidth = w;
+    m_pp.BackBufferHeight = h;
+    if (w != m_width || h != m_height) {
+      m_width = w;
+      m_height = h;
+      // resize the layer's drawables
+      WMTLayerProps props = {};
+      MetalLayer_getProps(m_layer, &props);
+      props.device = m_mtlDevice;
+      props.contents_scale = 1.0;
+      props.drawable_width = w;
+      props.drawable_height = h;
+      props.opaque = true;
+      props.display_sync_enabled = true;
+      props.framebuffer_only = true;
+      props.pixel_format = WMTPixelFormatBGRA8Unorm;
+      MetalLayer_setProps(m_layer, &props);
+      // default depth + size cache are stale
+      if (m_depthTex) {
+        NSObject_release(m_depthTex);
+        m_depthTex = 0;
+      }
+      for (auto &e : m_depthCache)
+        NSObject_release(e.tex);
+      m_depthCache.clear();
+      WMTTextureInfo dti = {};
+      dti.pixel_format = WMTPixelFormatDepth32Float_Stencil8;
+      dti.width = w;
+      dti.height = h;
+      dti.depth = 1;
+      dti.array_length = 1;
+      dti.type = WMTTextureType2D;
+      dti.mipmap_level_count = 1;
+      dti.sample_count = 1;
+      dti.usage = WMTTextureUsageRenderTarget;
+      dti.options = WMTResourceStorageModePrivate;
+      m_depthTex = MTLDevice_newTexture(m_mtlDevice, &dti);
+      // stale backbuffer desc: recreate on next Get
+      if (m_backBuffer) {
+        m_backBuffer->Release();
+        m_backBuffer = nullptr;
+      }
+      if (m_autoDepth) {
+        m_autoDepth->Release();
+        m_autoDepth = nullptr;
+      }
+    }
+    // make the window visible and sized to the swapchain in windowed mode
+    if (pp->Windowed)
+      SetWindowPos(m_hwnd, HWND_TOP, 40, 40, w, h,
+                   SWP_SHOWWINDOW | SWP_FRAMECHANGED);
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE Present(const RECT *pSourceRect,
@@ -1325,7 +1400,31 @@ public:
   HRESULT STDMETHODCALLTYPE
   UpdateTexture(IDirect3DBaseTexture9 *pSourceTexture,
                 IDirect3DBaseTexture9 *pDestinationTexture) override {
-    STUB_ONCE("UpdateTexture");
+    if (!pSourceTexture || !pDestinationTexture)
+      return D3DERR_INVALIDCALL;
+    if (pSourceTexture->GetType() != D3DRTYPE_TEXTURE ||
+        pDestinationTexture->GetType() != D3DRTYPE_TEXTURE) {
+      STUB_ONCE("UpdateTexture: non-2D");
+      return D3D_OK;
+    }
+    D9MTTexture *src = static_cast<D9MTTexture *>(pSourceTexture);
+    D9MTTexture *dst = static_cast<D9MTTexture *>(pDestinationTexture);
+    UINT levels = src->GetLevelCount() < dst->GetLevelCount()
+                      ? src->GetLevelCount()
+                      : dst->GetLevelCount();
+    for (UINT l = 0; l < levels; l++) {
+      D3DLOCKED_RECT sl, dl;
+      if (FAILED(src->LockRect(l, &sl, nullptr, D3DLOCK_READONLY)) ||
+          FAILED(dst->LockRect(l, &dl, nullptr, 0)))
+        break;
+      UINT rows = dst->Rows(l) < src->Rows(l) ? dst->Rows(l) : src->Rows(l);
+      UINT row = (UINT)(dl.Pitch < sl.Pitch ? dl.Pitch : sl.Pitch);
+      for (UINT y = 0; y < rows; y++)
+        memcpy((uint8_t *)dl.pBits + (size_t)y * dl.Pitch,
+               (const uint8_t *)sl.pBits + (size_t)y * sl.Pitch, row);
+      dst->UnlockRect(l); // uploads
+      src->UnlockRect(l);
+    }
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE GetRenderTargetData(
@@ -1371,12 +1470,11 @@ public:
   HRESULT STDMETHODCALLTYPE
   SetRenderTarget(DWORD RenderTargetIndex,
                   IDirect3DSurface9 *pRenderTarget) override {
-    if (RenderTargetIndex == 0) {
-      if (pRenderTarget && m_backBuffer &&
-          pRenderTarget != (IDirect3DSurface9 *)m_backBuffer)
-        STUB_ONCE("SetRenderTarget: non-backbuffer target (draws still hit "
-                  "the swapchain)");
+    if (RenderTargetIndex == 0 && pRenderTarget != m_rt0) {
+      ClosePass();
       m_rt0 = pRenderTarget;
+    } else if (RenderTargetIndex != 0 && pRenderTarget) {
+      STUB_ONCE("SetRenderTarget: MRT index > 0");
     }
     return D3D_OK;
   }
@@ -1398,7 +1496,10 @@ public:
   }
   HRESULT STDMETHODCALLTYPE
   SetDepthStencilSurface(IDirect3DSurface9 *pNewZStencil) override {
-    m_dsSurface = pNewZStencil;
+    if (pNewZStencil != m_dsSurface) {
+      ClosePass();
+      m_dsSurface = pNewZStencil;
+    }
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
@@ -1431,12 +1532,23 @@ public:
   HRESULT STDMETHODCALLTYPE Clear(DWORD Count, const D3DRECT *pRects,
                                   DWORD Flags, D3DCOLOR Color, float Z,
                                   DWORD Stencil) override {
+    // a clear starts a fresh pass on the current attachments (partial
+    // rect clears degrade to full clears for now)
+    ClosePass();
     if (Flags & D3DCLEAR_TARGET) {
       m_clearColor = Color;
-      m_clearPending = true;
+      m_pendClearColor = true;
+      m_clearPending = true; // legacy FF/empty-frame path
     }
-    if (Flags & D3DCLEAR_ZBUFFER)
-      m_clearDepth = Z; // the pass always clears depth (single pass/frame)
+    if (Flags & D3DCLEAR_ZBUFFER) {
+      m_pendClearDepth = true;
+      m_pendDepthVal = Z;
+      m_clearDepth = Z;
+    }
+    if (Flags & D3DCLEAR_STENCIL) {
+      m_pendClearStencil = true;
+      m_pendStencilVal = Stencil;
+    }
     return D3D_OK;
   }
 
@@ -1988,8 +2100,7 @@ public:
   }
   HRESULT STDMETHODCALLTYPE ResetEx(D3DPRESENT_PARAMETERS *pp,
                                     D3DDISPLAYMODEEX *) override {
-    STUB_ONCE("ResetEx");
-    return D3D_OK;
+    return Reset(pp);
   }
   HRESULT STDMETHODCALLTYPE GetDisplayModeEx(UINT iSwapChain,
                                              D3DDISPLAYMODEEX *pMode,
@@ -2062,8 +2173,45 @@ private:
   std::deque<CmdSlot> m_cmds;
   wmtcmd_base *m_cmdHead = nullptr;
   wmtcmd_base *m_cmdTail = nullptr;
-  bool m_ringResident = false; // UseResource emitted this frame
+  bool m_ringResident = false; // UseResource emitted this pass
   obj_handle_t m_lastPso = 0;  // dedupe SetPSO commands
+
+  // --- render passes ---
+  // Each SetRenderTarget/SetDepthStencilSurface/Clear boundary closes the
+  // current pass; Present encodes them in order, last ones onto the
+  // drawable. colorTex==0 means the swapchain drawable.
+  struct PassRec {
+    obj_handle_t colorTex = 0;
+    uint16_t colorLevel = 0;
+    uint32_t colorFmt = WMTPixelFormatBGRA8Unorm;
+    obj_handle_t depthTex = 0; // 0 = device default (or size-matched cache)
+    UINT width = 0, height = 0;
+    bool clearColor = false;
+    D3DCOLOR clearColorVal = 0;
+    bool clearDepth = false;
+    float clearDepthVal = 1.0f;
+    bool clearStencil = false;
+    DWORD clearStencilVal = 0;
+    wmtcmd_base *head = nullptr;
+  };
+  std::vector<PassRec> m_passes;
+  PassRec m_curPass;
+  bool m_passOpen = false;
+
+  // pending Clear() flags, consumed by the next pass
+  bool m_pendClearColor = false;
+  bool m_pendClearDepth = false;
+  bool m_pendClearStencil = false;
+  float m_pendDepthVal = 1.0f;
+  DWORD m_pendStencilVal = 0;
+
+  // size-matched depth textures for texture render targets whose dims
+  // differ from the backbuffer (e.g. shadow maps with no depth bound)
+  struct DepthCacheEntry {
+    UINT w, h;
+    obj_handle_t tex;
+  };
+  std::vector<DepthCacheEntry> m_depthCache;
 
   // PSO cache for the programmable path
   struct PsoKey {
@@ -2071,6 +2219,7 @@ private:
     void *ps;
     void *decl;
     uint32_t blend; // packed blend + color-write state
+    uint32_t rtFmt; // render target pixel format
   };
   std::vector<std::pair<PsoKey, obj_handle_t>> m_psoCache;
 
@@ -2152,6 +2301,9 @@ private:
   uint32_t GetOrCreateSampler(UINT slot);
   void MarkResident(obj_handle_t res);
   bool PrepareDraw();
+  void OpenPass();
+  void ClosePass();
+  obj_handle_t GetDepthForSize(UINT w, UINT h);
 };
 
 HRESULT D9MTDevice::Init() {
@@ -2229,10 +2381,10 @@ HRESULT D9MTDevice::Init() {
   psoInfo.colors[0].blending_enabled = false;
   psoInfo.rasterization_enabled = true;
   psoInfo.raster_sample_count = 1;
-  // the frame pass always attaches the depth buffer, so every PSO
-  // (fixed-function included) must declare its format
-  psoInfo.depth_pixel_format = WMTPixelFormatDepth32Float;
-  psoInfo.stencil_pixel_format = WMTPixelFormatInvalid;
+  // every pass attaches depth+stencil (one uniform format), so every PSO
+  // (fixed-function included) must declare both
+  psoInfo.depth_pixel_format = WMTPixelFormatDepth32Float_Stencil8;
+  psoInfo.stencil_pixel_format = WMTPixelFormatDepth32Float_Stencil8;
   psoInfo.vertex_function = vs;
   psoInfo.fragment_function = ps;
   psoInfo.input_primitive_topology = WMTPrimitiveTopologyClassTriangle;
@@ -2269,7 +2421,7 @@ HRESULT D9MTDevice::Init() {
   // backbuffer-sized depth buffer, attached to every frame's render pass
   {
     WMTTextureInfo dti = {};
-    dti.pixel_format = WMTPixelFormatDepth32Float;
+    dti.pixel_format = WMTPixelFormatDepth32Float_Stencil8;
     dti.width = m_width;
     dti.height = m_height;
     dti.depth = 1;
@@ -2333,6 +2485,8 @@ D9MTDevice::~D9MTDevice() {
     m_autoDepth->Release();
   if (m_depthTex)
     NSObject_release(m_depthTex);
+  for (auto &e : m_depthCache)
+    NSObject_release(e.tex);
   m_ring.free();
   if (m_vbuf)
     NSObject_release(m_vbuf);
@@ -2474,17 +2628,19 @@ obj_handle_t D9MTDevice::GetOrCreatePso() {
       (m_renderStates[D3DRS_BLENDOP] & 7) << 11 |
       (m_renderStates[D3DRS_COLORWRITEENABLE] & 0xF) << 14;
 
-  PsoKey key{m_vs, m_ps, m_vdecl, blendKey};
+  uint32_t rtFmt = m_passOpen ? m_curPass.colorFmt : WMTPixelFormatBGRA8Unorm;
+  PsoKey key{m_vs, m_ps, m_vdecl, blendKey, rtFmt};
   for (auto &e : m_psoCache)
     if (e.first.vs == key.vs && e.first.ps == key.ps &&
-        e.first.decl == key.decl && e.first.blend == key.blend)
+        e.first.decl == key.decl && e.first.blend == key.blend &&
+        e.first.rtFmt == key.rtFmt)
       return e.second;
 
   struct d9mt_pso_info info;
   memset(&info, 0, sizeof(info));
   info.vertex_function = m_vs->m_data.function;
   info.fragment_function = m_ps->m_data.function;
-  info.colors[0].pixel_format = WMTPixelFormatBGRA8Unorm;
+  info.colors[0].pixel_format = rtFmt;
   info.colors[0].write_mask =
       d3dwritemask_to_mtl(m_renderStates[D3DRS_COLORWRITEENABLE]);
   info.colors[0].blending_enabled = blendOn;
@@ -2501,7 +2657,8 @@ obj_handle_t D9MTDevice::GetOrCreatePso() {
     info.colors[0].dst_alpha_blend_factor = dst;
     info.colors[0].alpha_blend_op = op;
   }
-  info.depth_pixel_format = WMTPixelFormatDepth32Float;
+  info.depth_pixel_format = WMTPixelFormatDepth32Float_Stencil8;
+  info.stencil_pixel_format = WMTPixelFormatDepth32Float_Stencil8;
   info.raster_sample_count = 1;
 
   bool streamUsed[MAX_STREAMS] = {};
@@ -2641,6 +2798,101 @@ uint32_t D9MTDevice::GetOrCreateSampler(UINT slot) {
   return idx;
 }
 
+// depth texture matching arbitrary RT dims (default depth only fits the
+// backbuffer; Metal wants all attachments the same size)
+obj_handle_t D9MTDevice::GetDepthForSize(UINT w, UINT h) {
+  if (w == m_width && h == m_height)
+    return m_depthTex;
+  for (auto &e : m_depthCache)
+    if (e.w == w && e.h == h)
+      return e.tex;
+  WMTTextureInfo dti = {};
+  dti.pixel_format = WMTPixelFormatDepth32Float_Stencil8;
+  dti.width = w;
+  dti.height = h;
+  dti.depth = 1;
+  dti.array_length = 1;
+  dti.type = WMTTextureType2D;
+  dti.mipmap_level_count = 1;
+  dti.sample_count = 1;
+  dti.usage = WMTTextureUsageRenderTarget;
+  dti.options = WMTResourceStorageModePrivate;
+  obj_handle_t tex = MTLDevice_newTexture(m_mtlDevice, &dti);
+  if (tex)
+    m_depthCache.push_back({w, h, tex});
+  return tex;
+}
+
+// resolve the bound RT/DS into the current pass record and consume
+// pending clears
+void D9MTDevice::OpenPass() {
+  if (m_passOpen)
+    return;
+  m_curPass = PassRec{};
+  m_curPass.width = m_width;
+  m_curPass.height = m_height;
+
+  D9MTSurface *rts = nullptr;
+  if (m_rt0)
+    m_rt0->QueryInterface(IID_D9MTTexSurface, (void **)&rts);
+  if (rts && !rts->Parent()->IsDepth()) {
+    D9MTTexture *tex = rts->Parent();
+    m_curPass.colorTex = tex->m_tex;
+    m_curPass.colorLevel = (uint16_t)rts->Level();
+    m_curPass.colorFmt = tex->FmtInfo().wmt;
+    m_curPass.width = tex->LevelWidth(rts->Level());
+    m_curPass.height = tex->LevelHeight(rts->Level());
+  }
+  // else: backbuffer / placeholder -> drawable (colorTex 0)
+
+  D9MTSurface *dss = nullptr;
+  if (m_dsSurface)
+    m_dsSurface->QueryInterface(IID_D9MTTexSurface, (void **)&dss);
+  if (dss && dss->Parent()->IsDepth()) {
+    m_curPass.depthTex = dss->Parent()->m_tex;
+    // depth attachment must not be larger constraint is fine; but if the
+    // color target is the drawable and depth is a small texture, clamp
+    // the pass to the depth dims so Metal stays happy
+    UINT dw = dss->Parent()->LevelWidth(0), dh = dss->Parent()->LevelHeight(0);
+    if (dw < m_curPass.width || dh < m_curPass.height) {
+      m_curPass.width = dw;
+      m_curPass.height = dh;
+    }
+  } else {
+    m_curPass.depthTex = GetDepthForSize(m_curPass.width, m_curPass.height);
+  }
+
+  m_curPass.clearColor = m_pendClearColor;
+  m_curPass.clearColorVal = m_clearColor;
+  m_curPass.clearDepth = m_pendClearDepth;
+  m_curPass.clearDepthVal = m_pendDepthVal;
+  m_curPass.clearStencil = m_pendClearStencil;
+  m_curPass.clearStencilVal = m_pendStencilVal;
+  m_pendClearColor = m_pendClearDepth = m_pendClearStencil = false;
+
+  m_passOpen = true;
+}
+
+void D9MTDevice::ClosePass() {
+  if (!m_passOpen) {
+    m_cmdHead = m_cmdTail = nullptr;
+    return;
+  }
+  if (m_cmdHead) {
+    m_curPass.head = m_cmdHead;
+    m_passes.push_back(m_curPass);
+  }
+  m_passOpen = false;
+  m_cmdHead = m_cmdTail = nullptr;
+  // per-pass (encoder-scoped) state
+  m_ringResident = false;
+  m_frameResident.clear();
+  m_lastPso = 0;
+  m_lastDsso = 0;
+  m_lastRaster = ~0u;
+  m_lastViewScissor = ~0ull;
+}
+
 obj_handle_t D9MTDevice::GetOrCreateDsso() {
   DWORD zenable = m_renderStates[D3DRS_ZENABLE] != D3DZB_FALSE;
   DWORD zwrite = m_renderStates[D3DRS_ZWRITEENABLE] != 0;
@@ -2680,6 +2932,7 @@ bool D9MTDevice::PrepareDraw() {
     STUB_ONCE("draw without vs/ps/vertex declaration (FF draw path)");
     return false;
   }
+  OpenPass(); // PSO formats depend on the bound render target
   obj_handle_t pso = GetOrCreatePso();
   if (!pso)
     return false;
@@ -2753,7 +3006,7 @@ bool D9MTDevice::PrepareDraw() {
                             (uint64_t)(m_scissor.right - m_scissor.left),
                             (uint64_t)(m_scissor.bottom - m_scissor.top)};
       else
-        sc->scissor_rect = {0, 0, m_width, m_height};
+        sc->scissor_rect = {0, 0, m_curPass.width, m_curPass.height};
       m_lastViewScissor = vsKey;
     }
   }
@@ -2804,8 +3057,6 @@ bool D9MTDevice::PrepareDraw() {
       if (si.idSpecState >= 0)
         ab[si.idSpecState] = m_ring.gpuAddr + m_specStateOffset;
       for (const auto &tb : si.textures) {
-        if (tb.shadow)
-          continue; // depth-compare variant: lands with depth textures
         if (!stage) {
           STUB_ONCE("vertex texture fetch");
           continue;
@@ -2814,6 +3065,8 @@ bool D9MTDevice::PrepareDraw() {
             tb.samplerSlot < MAX_SAMPLERS ? m_textures[tb.samplerSlot] : nullptr;
         if (!tex)
           continue; // slot empty: shader reads a null texture handle
+        // the handle lands in both the plain and _shadow variants; the
+        // spec_state-selected branch decides which one executes
         ab[tb.abId] = tex->m_gpuId;
         MarkResident(tex->SampleHandle());
         samplerIdx[tb.samplerSlot] =
@@ -2943,69 +3196,110 @@ HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
                             const RGNDATA *pDirtyRegion) {
   obj_handle_t pool = NSAutoreleasePool_alloc_init();
 
+  ClosePass();
+
   obj_handle_t drawable = MetalLayer_nextDrawable(m_layer);
   if (!drawable) {
     log_msg("Present: nextDrawable returned null");
     NSObject_release(pool);
     m_vertexCount = 0;
+    m_passes.clear();
+    m_cmds.clear();
     return D3D_OK;
   }
-  obj_handle_t texture = MetalDrawable_texture(drawable);
+  obj_handle_t drawTex = MetalDrawable_texture(drawable);
   obj_handle_t cmdbuf = MTLCommandQueue_commandBuffer(m_queue);
 
-  WMTRenderPassInfo pass = {};
-  pass.colors[0].texture = texture;
-  pass.colors[0].load_action =
-      m_clearPending ? WMTLoadActionClear : WMTLoadActionDontCare;
-  pass.colors[0].store_action = WMTStoreActionStore;
-  pass.colors[0].clear_color.r = ((m_clearColor >> 16) & 0xff) / 255.0;
-  pass.colors[0].clear_color.g = ((m_clearColor >> 8) & 0xff) / 255.0;
-  pass.colors[0].clear_color.b = (m_clearColor & 0xff) / 255.0;
-  pass.colors[0].clear_color.a = ((m_clearColor >> 24) & 0xff) / 255.0;
-  // single render pass per frame: depth always attached, cleared at load
-  pass.depth.texture = m_depthTex;
-  pass.depth.load_action = WMTLoadActionClear;
-  pass.depth.store_action = WMTStoreActionDontCare;
-  pass.depth.clear_depth = m_clearDepth;
-
-  obj_handle_t enc = MTLCommandBuffer_renderCommandEncoder(cmdbuf, &pass);
-  if (enc) {
-    // fixed-function UP block first (if any), then the recorded
-    // programmable-path commands chained after it
-    struct wmtcmd_render_setpso setPso = {};
-    struct wmtcmd_render_setbuffer setVb = {};
-    struct wmtcmd_render_draw draw = {};
-    const struct wmtcmd_base *head = nullptr;
-
-    if (m_vertexCount) {
-      setPso.type = WMTRenderCommandSetPSO;
-      setPso.next.set(&setVb);
-      setPso.pso = m_pso;
-
-      setVb.type = WMTRenderCommandSetVertexBuffer;
-      setVb.next.set(&draw);
-      setVb.buffer = m_vbuf;
-      setVb.offset = 0;
-      setVb.index = 0;
-
-      draw.type = WMTRenderCommandDraw;
-      draw.next.set(m_cmdHead);
-      draw.primitive_type = WMTPrimitiveTypeTriangle;
-      draw.vertex_start = 0;
-      draw.vertex_count = m_vertexCount;
-      draw.instance_count = 1;
-      draw.base_instance = 0;
-
-      head = (const struct wmtcmd_base *)&setPso;
+  bool drawableTouched = false;
+  auto encodePass = [&](const PassRec &p, const wmtcmd_base *head) {
+    WMTRenderPassInfo pass = {};
+    bool toDrawable = p.colorTex == 0;
+    pass.colors[0].texture = toDrawable ? drawTex : p.colorTex;
+    pass.colors[0].level = p.colorLevel;
+    pass.colors[0].store_action = WMTStoreActionStore;
+    if (p.clearColor) {
+      pass.colors[0].load_action = WMTLoadActionClear;
+      pass.colors[0].clear_color.r = ((p.clearColorVal >> 16) & 0xff) / 255.0;
+      pass.colors[0].clear_color.g = ((p.clearColorVal >> 8) & 0xff) / 255.0;
+      pass.colors[0].clear_color.b = (p.clearColorVal & 0xff) / 255.0;
+      pass.colors[0].clear_color.a = ((p.clearColorVal >> 24) & 0xff) / 255.0;
     } else {
-      head = m_cmdHead;
+      // preserve earlier passes on the same attachment within the frame
+      pass.colors[0].load_action = (toDrawable && !drawableTouched)
+                                       ? WMTLoadActionDontCare
+                                       : WMTLoadActionLoad;
     }
+    obj_handle_t depth =
+        p.depthTex ? p.depthTex : GetDepthForSize(p.width, p.height);
+    pass.depth.texture = depth;
+    pass.depth.load_action =
+        p.clearDepth ? WMTLoadActionClear : WMTLoadActionLoad;
+    pass.depth.store_action = WMTStoreActionStore;
+    pass.depth.clear_depth = p.clearDepthVal;
+    // depth format always carries stencil; bind it alongside
+    pass.stencil.texture = depth;
+    pass.stencil.load_action =
+        p.clearStencil ? WMTLoadActionClear : WMTLoadActionLoad;
+    pass.stencil.store_action = WMTStoreActionStore;
+    pass.stencil.clear_stencil = (uint8_t)p.clearStencilVal;
 
+    obj_handle_t enc = MTLCommandBuffer_renderCommandEncoder(cmdbuf, &pass);
+    if (!enc) {
+      log_msg("Present: renderCommandEncoder failed (pass %s %ux%u)",
+              toDrawable ? "drawable" : "texture", p.width, p.height);
+      return;
+    }
     if (head)
       MTLRenderCommandEncoder_encodeCommands(enc, head);
     MTLCommandEncoder_endEncoding(enc);
-  } else {
-    log_msg("Present: renderCommandEncoder failed");
+    if (toDrawable)
+      drawableTouched = true;
+  };
+
+  for (const PassRec &p : m_passes)
+    encodePass(p, p.head);
+
+  // legacy fixed-function UP block (test apps): single drawable pass
+  if (m_vertexCount) {
+    struct wmtcmd_render_setpso setPso = {};
+    struct wmtcmd_render_setbuffer setVb = {};
+    struct wmtcmd_render_draw draw = {};
+    setPso.type = WMTRenderCommandSetPSO;
+    setPso.next.set(&setVb);
+    setPso.pso = m_pso;
+    setVb.type = WMTRenderCommandSetVertexBuffer;
+    setVb.next.set(&draw);
+    setVb.buffer = m_vbuf;
+    setVb.offset = 0;
+    setVb.index = 0;
+    draw.type = WMTRenderCommandDraw;
+    draw.primitive_type = WMTPrimitiveTypeTriangle;
+    draw.vertex_start = 0;
+    draw.vertex_count = m_vertexCount;
+    draw.instance_count = 1;
+    draw.base_instance = 0;
+
+    PassRec ff = {};
+    ff.width = m_width;
+    ff.height = m_height;
+    ff.clearColor = m_clearPending;
+    ff.clearColorVal = m_clearColor;
+    ff.clearDepth = true;
+    ff.clearDepthVal = m_clearDepth;
+    encodePass(ff, (const wmtcmd_base *)&setPso);
+  }
+
+  // clear-only frame (or trailing clear): give the drawable its clear
+  if (!drawableTouched) {
+    PassRec co = {};
+    co.width = m_width;
+    co.height = m_height;
+    co.clearColor = m_clearPending || m_pendClearColor;
+    co.clearColorVal = m_clearColor;
+    co.clearDepth = true;
+    co.clearDepthVal = m_clearDepth;
+    encodePass(co, nullptr);
+    m_pendClearColor = m_pendClearDepth = m_pendClearStencil = false;
   }
 
   MTLCommandBuffer_presentDrawable(cmdbuf, drawable);
@@ -3018,7 +3312,9 @@ HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
   m_vertexCount = 0;
   m_clearPending = false;
 
+  size_t passCount = m_passes.size();
   // frame done (waitUntilCompleted above): recycle command arena + ring
+  m_passes.clear();
   m_cmds.clear();
   m_cmdHead = nullptr;
   m_cmdTail = nullptr;
@@ -3033,7 +3329,7 @@ HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
   static int presented = 0;
   if (presented < 3) {
     presented++;
-    log_msg("Present: frame %d OK", presented);
+    log_msg("Present: frame %d OK (%zu passes)", presented, passCount);
   }
   return D3D_OK;
 }
