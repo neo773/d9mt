@@ -1,0 +1,34 @@
+test/extest.c
+  s_ef7e2ce3136a21::t_5feea762ade35d 1-116
+src/d3d9/d3d9.cpp
+  s_ef7e2ce3136a21::t_65931349d62cd9 970-985
+  s_ef7e2ce3136a21::t_54c72cf74d9717 1710-1797
+  s_ef7e2ce3136a21::t_b87026001a9fba 2827,2832-2833
+  s_ef7e2ce3136a21::t_22ce7d6e7b4da4 1072-1073,1078-1091,1097-1109
+  s_ef7e2ce3136a21::t_4bb204c5586ca7 2962-3003
+  s_ef7e2ce3136a21::t_92ee4ac32c639a 3079-3083
+  s_ef7e2ce3136a21::t_0f2748398be33a 2112-2115
+  s_ef7e2ce3136a21::t_f40c07fa4034bd 771-848
+  s_ef7e2ce3136a21::t_e3e72f3926df48 893-894
+  s_ef7e2ce3136a21::t_47cfacae367745 1882-1887
+  s_ef7e2ce3136a21::t_2206a4ed6a0e0e 863
+  s_ef7e2ce3136a21::t_534b5ba9bf1eee 1152-1162,1167-1173,1179-1181,1183-1190,1194,1199-1218
+scripts/build.sh
+  s_ef7e2ce3136a21::t_808950fb3ad368 129-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "1757d75d69b0f7b8d4e97372824656fa0663991c",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
