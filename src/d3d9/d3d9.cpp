@@ -75,7 +75,9 @@ static void log_nserror(const char *what, obj_handle_t err) {
 // render_state, [[buffer(2)]] = sampler heap), so vertex streams bind high.
 static constexpr uint32_t STREAM_BUFFER_BASE = 16;
 static constexpr UINT MAX_STREAMS = 8;
-static constexpr UINT RING_SIZE = 8u << 20; // per-frame upload ring
+// per-frame upload ring. GTA IV peaks well past 1000 draws/frame with
+// ~9KB of constants each (full cbuffer re-upload until dirty tracking)
+static constexpr UINT RING_SIZE = 64u << 20;
 static constexpr UINT MAX_SAMPLERS = 16;    // PS samplers s0-s15
 static constexpr UINT MAX_SAMPLER_STATES = 14; // D3DSAMP_* max + 1
 static constexpr UINT SAMPLER_HEAP_SLOTS = 64; // distinct sampler states
@@ -2317,9 +2319,13 @@ private:
 
   // bump-allocate from the upload ring; returns host pointer, fills offset
   void *RingAlloc(UINT size, UINT *outOffset) {
-    UINT aligned = (m_ringOffset + 255u) & ~255u;
+    UINT aligned = (m_ringOffset + 63u) & ~63u; // worst-case cb offset align
     if (aligned + size > RING_SIZE) {
-      log_msg("RingAlloc: ring exhausted (%u + %u)", aligned, size);
+      static bool warned = false;
+      if (!warned) {
+        warned = true;
+        log_msg("RingAlloc: ring exhausted (%u + %u)", aligned, size);
+      }
       return nullptr;
     }
     *outOffset = aligned;
@@ -3231,6 +3237,33 @@ static bool prim_to_mtl(D3DPRIMITIVETYPE t, UINT primCount,
 
 HRESULT D9MTDevice::DrawPrimitive(D3DPRIMITIVETYPE PrimitiveType,
                                   UINT StartVertex, UINT PrimitiveCount) {
+  // Metal has no triangle fans: synthesize a list index buffer in the ring
+  if (PrimitiveType == D3DPT_TRIANGLEFAN) {
+    if (!PrimitiveCount)
+      return D3D_OK;
+    if (!PrepareDraw())
+      return D3D_OK;
+    UINT idxOff = 0;
+    uint32_t *idx =
+        (uint32_t *)RingAlloc(PrimitiveCount * 3 * sizeof(uint32_t), &idxOff);
+    if (!idx)
+      return D3D_OK;
+    for (UINT i = 0; i < PrimitiveCount; i++) {
+      idx[i * 3 + 0] = 0;
+      idx[i * 3 + 1] = i + 1;
+      idx[i * 3 + 2] = i + 2;
+    }
+    auto *d =
+        AppendCmd<wmtcmd_render_draw_indexed>(WMTRenderCommandDrawIndexed);
+    d->primitive_type = WMTPrimitiveTypeTriangle;
+    d->index_type = WMTIndexTypeUInt32;
+    d->index_count = PrimitiveCount * 3;
+    d->index_buffer = m_ring.buf;
+    d->index_buffer_offset = idxOff;
+    d->instance_count = 1;
+    d->base_vertex = StartVertex;
+    return D3D_OK;
+  }
   WMTPrimitiveType pt;
   uint64_t count;
   if (!prim_to_mtl(PrimitiveType, PrimitiveCount, &pt, &count)) {
