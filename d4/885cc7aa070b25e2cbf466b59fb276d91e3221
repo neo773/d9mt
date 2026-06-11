@@ -1,0 +1,28 @@
+src/d3d9/shader.metal
+  s_ef7e2ce3136a21::t_616b9d298359dd 32-52
+src/d3d9/d3d9.cpp
+  s_ef7e2ce3136a21::t_b80421f06b0138 3629-3668
+  s_ef7e2ce3136a21::t_209f30f9348405 2673-2678
+  s_ef7e2ce3136a21::t_d47d850f1c7f65 3021-3053
+  s_ef7e2ce3136a21::t_2fb1b5592ce27d 1545-1549,1552-1571
+  s_ef7e2ce3136a21::t_8f34cf9b5c2106 2344-2346
+  s_ef7e2ce3136a21::t_0ae37c8b75b8c0 2487-2494
+  s_ef7e2ce3136a21::t_470de67b879639 2369-2374
+  s_ef7e2ce3136a21::t_525deed3ac65a4 3088-3089,3095-3101,3105-3110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "d4885cc7aa070b25e2cbf466b59fb276d91e3221",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
