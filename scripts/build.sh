@@ -126,6 +126,12 @@ build_shader_test() { # <name>
 build_shader_test shadertri
 build_shader_test texquad
 
+echo "[build] compiling extest.exe"
+i686-w64-mingw32-gcc -O2 \
+  -o "$BUILD/extest.exe" \
+  "$ROOT/test/extest.c" \
+  -ld3d9 -luser32 -lgdi32
+
 # depthtri reuses the shadertri bytecode headers
 if [[ -f "$BUILD/shadertri_vs_bytecode.h" ]]; then
   echo "[build] compiling depthtri.exe (reuses shadertri bytecode)"

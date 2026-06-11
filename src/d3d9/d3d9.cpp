@@ -768,6 +768,84 @@ HRESULT D9MTTexture::GetSurfaceLevel(UINT Level,
   return D3D_OK;
 }
 
+// Standalone surface (backbuffer, render target, depth-stencil,
+// offscreen-plain). Carries a desc; rendering still goes to the one
+// swapchain pass, so non-backbuffer targets are placeholders that let
+// apps proceed (logged in SetRenderTarget).
+class D9MTPlainSurface final : public IDirect3DSurface9 {
+public:
+  D9MTPlainSurface(IDirect3DDevice9 *dev, const D3DSURFACE_DESC &desc)
+      : m_device(dev), m_desc(desc) {}
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
+    if (!ppv)
+      return E_POINTER;
+    *ppv = this;
+    AddRef();
+    return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override {
+    return InterlockedIncrement(&m_refcount);
+  }
+  ULONG STDMETHODCALLTYPE Release() override {
+    ULONG r = InterlockedDecrement(&m_refcount);
+    if (!r)
+      delete this;
+    return r;
+  }
+  HRESULT STDMETHODCALLTYPE GetDevice(IDirect3DDevice9 **ppDevice) override {
+    if (!ppDevice)
+      return D3DERR_INVALIDCALL;
+    m_device->AddRef();
+    *ppDevice = m_device;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, const void *, DWORD,
+                                           DWORD) override {
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, void *, DWORD *) override {
+    return D3DERR_NOTFOUND;
+  }
+  HRESULT STDMETHODCALLTYPE FreePrivateData(REFGUID) override { return D3D_OK; }
+  DWORD STDMETHODCALLTYPE SetPriority(DWORD) override { return 0; }
+  DWORD STDMETHODCALLTYPE GetPriority() override { return 0; }
+  void STDMETHODCALLTYPE PreLoad() override {}
+  D3DRESOURCETYPE STDMETHODCALLTYPE GetType() override {
+    return D3DRTYPE_SURFACE;
+  }
+  HRESULT STDMETHODCALLTYPE GetContainer(REFIID, void **ppContainer) override {
+    if (!ppContainer)
+      return D3DERR_INVALIDCALL;
+    m_device->AddRef();
+    *ppContainer = m_device;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetDesc(D3DSURFACE_DESC *pDesc) override {
+    if (!pDesc)
+      return D3DERR_INVALIDCALL;
+    *pDesc = m_desc;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE LockRect(D3DLOCKED_RECT *, const RECT *,
+                                     DWORD) override {
+    STUB_ONCE("D9MTPlainSurface::LockRect");
+    return D3DERR_INVALIDCALL;
+  }
+  HRESULT STDMETHODCALLTYPE UnlockRect() override { return D3D_OK; }
+  HRESULT STDMETHODCALLTYPE GetDC(HDC *) override {
+    return D3DERR_INVALIDCALL;
+  }
+  HRESULT STDMETHODCALLTYPE ReleaseDC(HDC) override {
+    return D3DERR_INVALIDCALL;
+  }
+
+private:
+  volatile LONG m_refcount = 1;
+  IDirect3DDevice9 *m_device;
+  D3DSURFACE_DESC m_desc;
+};
+
 // ---------------------------------------------------------------------------
 // device
 // ---------------------------------------------------------------------------
@@ -782,7 +860,7 @@ static constexpr UINT VERTEX_STRIDE = sizeof(D9MTVertex); // 20
 
 class D9MTInterface;
 
-class D9MTDevice final : public IDirect3DDevice9 {
+class D9MTDevice final : public IDirect3DDevice9Ex {
 public:
   D9MTDevice(D9MTInterface *parent, HWND hwnd, UINT width, UINT height)
       : m_parent(parent), m_hwnd(hwnd), m_width(width), m_height(height) {
@@ -812,7 +890,8 @@ public:
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
     if (!ppv)
       return E_POINTER;
-    if (riid == IID_IUnknown || riid == IID_IDirect3DDevice9) {
+    if (riid == IID_IUnknown || riid == IID_IDirect3DDevice9 ||
+        riid == IID_IDirect3DDevice9Ex) {
       *ppv = this;
       AddRef();
       return S_OK;
@@ -888,10 +967,22 @@ public:
   HRESULT STDMETHODCALLTYPE
   GetBackBuffer(UINT iSwapChain, UINT iBackBuffer, D3DBACKBUFFER_TYPE Type,
                 IDirect3DSurface9 **ppBackBuffer) override {
-    STUB_ONCE("GetBackBuffer");
-    if (ppBackBuffer)
-      *ppBackBuffer = nullptr;
-    return D3DERR_NOTAVAILABLE;
+    if (!ppBackBuffer)
+      return D3DERR_INVALIDCALL;
+    if (!m_backBuffer) {
+      D3DSURFACE_DESC d = {};
+      d.Format = D3DFMT_A8R8G8B8;
+      d.Type = D3DRTYPE_SURFACE;
+      d.Usage = D3DUSAGE_RENDERTARGET;
+      d.Pool = D3DPOOL_DEFAULT;
+      d.MultiSampleType = D3DMULTISAMPLE_NONE;
+      d.Width = m_width;
+      d.Height = m_height;
+      m_backBuffer = new D9MTPlainSurface(this, d);
+    }
+    m_backBuffer->AddRef();
+    *ppBackBuffer = m_backBuffer;
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   GetRasterStatus(UINT iSwapChain, D3DRASTER_STATUS *pRasterStatus) override {
@@ -978,19 +1069,44 @@ public:
     *ppIndexBuffer = ib;
     return D3D_OK;
   }
+  // Placeholder surfaces: created so apps proceed, but rendering still
+  // targets the swapchain pass only (real render-to-texture comes later)
   HRESULT STDMETHODCALLTYPE CreateRenderTarget(
       UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MS,
       DWORD MSQuality, BOOL Lockable, IDirect3DSurface9 **ppSurface,
       HANDLE *pSharedHandle) override {
-    STUB_ONCE("CreateRenderTarget");
-    return D3DERR_NOTAVAILABLE;
+    STUB_ONCE("CreateRenderTarget (placeholder surface)");
+    if (!ppSurface || !Width || !Height)
+      return D3DERR_INVALIDCALL;
+    D3DSURFACE_DESC d = {};
+    d.Format = Format;
+    d.Type = D3DRTYPE_SURFACE;
+    d.Usage = D3DUSAGE_RENDERTARGET;
+    d.Pool = D3DPOOL_DEFAULT;
+    d.MultiSampleType = MS;
+    d.MultiSampleQuality = MSQuality;
+    d.Width = Width;
+    d.Height = Height;
+    *ppSurface = new D9MTPlainSurface(this, d);
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE CreateDepthStencilSurface(
       UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MS,
       DWORD MSQuality, BOOL Discard, IDirect3DSurface9 **ppSurface,
       HANDLE *pSharedHandle) override {
-    STUB_ONCE("CreateDepthStencilSurface");
-    return D3DERR_NOTAVAILABLE;
+    if (!ppSurface || !Width || !Height)
+      return D3DERR_INVALIDCALL;
+    D3DSURFACE_DESC d = {};
+    d.Format = Format;
+    d.Type = D3DRTYPE_SURFACE;
+    d.Usage = D3DUSAGE_DEPTHSTENCIL;
+    d.Pool = D3DPOOL_DEFAULT;
+    d.MultiSampleType = MS;
+    d.MultiSampleQuality = MSQuality;
+    d.Width = Width;
+    d.Height = Height;
+    *ppSurface = new D9MTPlainSurface(this, d);
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   UpdateSurface(IDirect3DSurface9 *pSourceSurface, const RECT *pSourceRect,
@@ -1033,32 +1149,73 @@ public:
   HRESULT STDMETHODCALLTYPE CreateOffscreenPlainSurface(
       UINT Width, UINT Height, D3DFORMAT Format, D3DPOOL Pool,
       IDirect3DSurface9 **ppSurface, HANDLE *pSharedHandle) override {
-    STUB_ONCE("CreateOffscreenPlainSurface");
-    return D3DERR_NOTAVAILABLE;
+    STUB_ONCE("CreateOffscreenPlainSurface (placeholder surface)");
+    if (!ppSurface || !Width || !Height)
+      return D3DERR_INVALIDCALL;
+    D3DSURFACE_DESC d = {};
+    d.Format = Format;
+    d.Type = D3DRTYPE_SURFACE;
+    d.Pool = Pool;
+    d.Width = Width;
+    d.Height = Height;
+    *ppSurface = new D9MTPlainSurface(this, d);
+    return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   SetRenderTarget(DWORD RenderTargetIndex,
                   IDirect3DSurface9 *pRenderTarget) override {
-    STUB_ONCE("SetRenderTarget");
+    if (RenderTargetIndex == 0) {
+      if (pRenderTarget && m_backBuffer &&
+          pRenderTarget != (IDirect3DSurface9 *)m_backBuffer)
+        STUB_ONCE("SetRenderTarget: non-backbuffer target (draws still hit "
+                  "the swapchain)");
+      m_rt0 = pRenderTarget;
+    }
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   GetRenderTarget(DWORD RenderTargetIndex,
                   IDirect3DSurface9 **ppRenderTarget) override {
-    STUB_ONCE("GetRenderTarget");
-    if (ppRenderTarget)
+    if (!ppRenderTarget)
+      return D3DERR_INVALIDCALL;
+    if (RenderTargetIndex != 0) {
       *ppRenderTarget = nullptr;
-    return D3DERR_NOTAVAILABLE;
+      return D3DERR_NOTFOUND;
+    }
+    if (m_rt0) {
+      m_rt0->AddRef();
+      *ppRenderTarget = m_rt0;
+      return D3D_OK;
+    }
+    return GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, ppRenderTarget);
   }
   HRESULT STDMETHODCALLTYPE
   SetDepthStencilSurface(IDirect3DSurface9 *pNewZStencil) override {
+    m_dsSurface = pNewZStencil;
     return D3D_OK;
   }
   HRESULT STDMETHODCALLTYPE
   GetDepthStencilSurface(IDirect3DSurface9 **ppZStencilSurface) override {
-    if (ppZStencilSurface)
-      *ppZStencilSurface = nullptr;
-    return D3DERR_NOTFOUND;
+    if (!ppZStencilSurface)
+      return D3DERR_INVALIDCALL;
+    if (m_dsSurface) {
+      m_dsSurface->AddRef();
+      *ppZStencilSurface = m_dsSurface;
+      return D3D_OK;
+    }
+    if (!m_autoDepth) {
+      D3DSURFACE_DESC d = {};
+      d.Format = D3DFMT_D24S8;
+      d.Type = D3DRTYPE_SURFACE;
+      d.Usage = D3DUSAGE_DEPTHSTENCIL;
+      d.Pool = D3DPOOL_DEFAULT;
+      d.Width = m_width;
+      d.Height = m_height;
+      m_autoDepth = new D9MTPlainSurface(this, d);
+    }
+    m_autoDepth->AddRef();
+    *ppZStencilSurface = m_autoDepth;
+    return D3D_OK;
   }
 
   // frame
@@ -1550,6 +1707,94 @@ public:
     return D3DERR_NOTAVAILABLE;
   }
 
+  // IDirect3DDevice9Ex
+  HRESULT STDMETHODCALLTYPE SetConvolutionMonoKernel(UINT, UINT, float *,
+                                                     float *) override {
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE ComposeRects(IDirect3DSurface9 *,
+                                         IDirect3DSurface9 *,
+                                         IDirect3DVertexBuffer9 *, UINT,
+                                         IDirect3DVertexBuffer9 *,
+                                         D3DCOMPOSERECTSOP, int,
+                                         int) override {
+    STUB_ONCE("ComposeRects");
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE PresentEx(const RECT *pSourceRect,
+                                      const RECT *pDestRect,
+                                      HWND hDestWindowOverride,
+                                      const RGNDATA *pDirtyRegion,
+                                      DWORD dwFlags) override {
+    return Present(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
+  }
+  HRESULT STDMETHODCALLTYPE GetGPUThreadPriority(INT *pPriority) override {
+    if (pPriority)
+      *pPriority = 0;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetGPUThreadPriority(INT) override {
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE WaitForVBlank(UINT) override { return D3D_OK; }
+  HRESULT STDMETHODCALLTYPE CheckResourceResidency(IDirect3DResource9 **,
+                                                   UINT32) override {
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT MaxLatency) override {
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT *pMaxLatency) override {
+    if (pMaxLatency)
+      *pMaxLatency = 1;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE CheckDeviceState(HWND hDestinationWindow) override {
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE CreateRenderTargetEx(
+      UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MS,
+      DWORD MSQuality, BOOL Lockable, IDirect3DSurface9 **ppSurface,
+      HANDLE *pSharedHandle, DWORD Usage) override {
+    return CreateRenderTarget(Width, Height, Format, MS, MSQuality, Lockable,
+                              ppSurface, pSharedHandle);
+  }
+  HRESULT STDMETHODCALLTYPE CreateOffscreenPlainSurfaceEx(
+      UINT Width, UINT Height, D3DFORMAT Format, D3DPOOL Pool,
+      IDirect3DSurface9 **ppSurface, HANDLE *pSharedHandle,
+      DWORD Usage) override {
+    return CreateOffscreenPlainSurface(Width, Height, Format, Pool, ppSurface,
+                                       pSharedHandle);
+  }
+  HRESULT STDMETHODCALLTYPE CreateDepthStencilSurfaceEx(
+      UINT Width, UINT Height, D3DFORMAT Format, D3DMULTISAMPLE_TYPE MS,
+      DWORD MSQuality, BOOL Discard, IDirect3DSurface9 **ppSurface,
+      HANDLE *pSharedHandle, DWORD Usage) override {
+    return CreateDepthStencilSurface(Width, Height, Format, MS, MSQuality,
+                                     Discard, ppSurface, pSharedHandle);
+  }
+  HRESULT STDMETHODCALLTYPE ResetEx(D3DPRESENT_PARAMETERS *pp,
+                                    D3DDISPLAYMODEEX *) override {
+    STUB_ONCE("ResetEx");
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE GetDisplayModeEx(UINT iSwapChain,
+                                             D3DDISPLAYMODEEX *pMode,
+                                             D3DDISPLAYROTATION *pRotation)
+      override {
+    if (pMode) {
+      pMode->Size = sizeof(*pMode);
+      pMode->Width = (UINT)GetSystemMetrics(SM_CXSCREEN);
+      pMode->Height = (UINT)GetSystemMetrics(SM_CYSCREEN);
+      pMode->RefreshRate = 60;
+      pMode->Format = D3DFMT_X8R8G8B8;
+      pMode->ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
+    }
+    if (pRotation)
+      *pRotation = D3DDISPLAYROTATION_IDENTITY;
+    return D3D_OK;
+  }
+
 private:
   volatile LONG m_refcount = 1;
   D9MTInterface *m_parent;
@@ -1633,6 +1878,12 @@ private:
   // textures made resident this frame (their MTLTextures live outside the
   // ring, so each needs its own UseResource)
   std::vector<obj_handle_t> m_frameResident;
+
+  // --- surfaces handed to the app ---
+  D9MTPlainSurface *m_backBuffer = nullptr; // owned (one app ref each Get)
+  D9MTPlainSurface *m_autoDepth = nullptr;  // owned
+  IDirect3DSurface9 *m_rt0 = nullptr;       // borrowed, set by the app
+  IDirect3DSurface9 *m_dsSurface = nullptr; // borrowed
 
   // --- render states, depth, viewport/scissor ---
   DWORD m_renderStates[MAX_RENDER_STATES] = {};
@@ -1858,6 +2109,10 @@ D9MTDevice::~D9MTDevice() {
     NSObject_release(s.handle);
   for (auto &d : m_dssoCache)
     NSObject_release(d.handle);
+  if (m_backBuffer)
+    m_backBuffer->Release();
+  if (m_autoDepth)
+    m_autoDepth->Release();
   if (m_depthTex)
     NSObject_release(m_depthTex);
   m_ring.free();
@@ -2569,12 +2824,13 @@ HRESULT D9MTDevice::Present(const RECT *pSourceRect, const RECT *pDestRect,
 // IDirect3D9
 // ---------------------------------------------------------------------------
 
-class D9MTInterface final : public IDirect3D9 {
+class D9MTInterface final : public IDirect3D9Ex {
 public:
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override {
     if (!ppv)
       return E_POINTER;
-    if (riid == IID_IUnknown || riid == IID_IDirect3D9) {
+    if (riid == IID_IUnknown || riid == IID_IDirect3D9 ||
+        riid == IID_IDirect3D9Ex) {
       *ppv = this;
       AddRef();
       return S_OK;
@@ -2703,6 +2959,48 @@ public:
     return D3D_OK;
   }
 
+  // IDirect3D9Ex
+  UINT STDMETHODCALLTYPE GetAdapterModeCountEx(
+      UINT Adapter, const D3DDISPLAYMODEFILTER *pFilter) override {
+    return 1;
+  }
+  HRESULT STDMETHODCALLTYPE
+  EnumAdapterModesEx(UINT Adapter, const D3DDISPLAYMODEFILTER *pFilter,
+                     UINT Mode, D3DDISPLAYMODEEX *pMode) override {
+    return GetAdapterDisplayModeEx(Adapter, pMode, nullptr);
+  }
+  HRESULT STDMETHODCALLTYPE
+  GetAdapterDisplayModeEx(UINT Adapter, D3DDISPLAYMODEEX *pMode,
+                          D3DDISPLAYROTATION *pRotation) override {
+    if (pMode) {
+      pMode->Size = sizeof(*pMode);
+      pMode->Width = (UINT)GetSystemMetrics(SM_CXSCREEN);
+      pMode->Height = (UINT)GetSystemMetrics(SM_CYSCREEN);
+      pMode->RefreshRate = 60;
+      pMode->Format = D3DFMT_X8R8G8B8;
+      pMode->ScanLineOrdering = D3DSCANLINEORDERING_PROGRESSIVE;
+    }
+    if (pRotation)
+      *pRotation = D3DDISPLAYROTATION_IDENTITY;
+    return D3D_OK;
+  }
+  HRESULT STDMETHODCALLTYPE CreateDeviceEx(
+      UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
+      DWORD BehaviorFlags, D3DPRESENT_PARAMETERS *pp,
+      D3DDISPLAYMODEEX *pFullscreenDisplayMode,
+      IDirect3DDevice9Ex **ppReturnedDeviceInterface) override {
+    // fullscreen mode handled as windowed-sized swapchain for now
+    return CreateDevice(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pp,
+                        (IDirect3DDevice9 **)ppReturnedDeviceInterface);
+  }
+  HRESULT STDMETHODCALLTYPE GetAdapterLUID(UINT Adapter, LUID *pLUID) override {
+    if (!pLUID)
+      return D3DERR_INVALIDCALL;
+    pLUID->LowPart = 0xD937;
+    pLUID->HighPart = 0;
+    return D3D_OK;
+  }
+
   volatile LONG m_refcount = 1;
 };
 
@@ -2778,10 +3076,11 @@ IDirect3D9 *WINAPI Direct3DCreate9(UINT SDKVersion) {
 }
 
 HRESULT WINAPI Direct3DCreate9Ex(UINT SDKVersion, IDirect3D9Ex **ppD3D) {
-  log_msg("Direct3DCreate9Ex: not available");
-  if (ppD3D)
-    *ppD3D = nullptr;
-  return D3DERR_NOTAVAILABLE;
+  log_msg("Direct3DCreate9Ex(SDK %u)", SDKVersion);
+  if (!ppD3D)
+    return D3DERR_INVALIDCALL;
+  *ppD3D = new D9MTInterface();
+  return S_OK;
 }
 
 int WINAPI D3DPERF_BeginEvent(D3DCOLOR col, LPCWSTR wszName) { return 0; }
