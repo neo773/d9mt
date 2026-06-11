@@ -1,0 +1,45 @@
+src/d3d9/d3d9.cpp
+  s_ef7e2ce3136a21::t_056d4e8f780aab 3332
+  s_ef7e2ce3136a21::t_2c904bb444532a 2176,2179-2214
+  s_ef7e2ce3136a21::t_75e5606ddac1c5 747-749,753-756
+  s_ef7e2ce3136a21::t_bfa864bca65cc3 2935
+  s_ef7e2ce3136a21::t_526d5bc56e99b5 3068-3069
+  s_ef7e2ce3136a21::t_94f46612f0de6c 3199-3200,3206-3207,3210,3213-3225,3227-3230,3234-3250,3255-3302,3317
+  s_ef7e2ce3136a21::t_978529cceb75f3 2424
+  s_ef7e2ce3136a21::t_f68f0f0201d3df 1535-1537,1540-1550
+  s_ef7e2ce3136a21::t_d2652921d2840e 603-604
+  s_ef7e2ce3136a21::t_8c6aa16c17d5b2 1188-1244
+  s_ef7e2ce3136a21::t_eac2f8371aeec9 2631-2632,2635-2636,2643
+  s_ef7e2ce3136a21::t_42c598ed0bbe7b 2304-2306
+  s_ef7e2ce3136a21::t_6836fd2d114692 2660-2661
+  s_ef7e2ce3136a21::t_60cc640891f4e4 2222
+  s_ef7e2ce3136a21::t_0472b3c3b610ae 1403-1427
+  s_ef7e2ce3136a21::t_d9cd53960eb7e2 843-846
+  s_ef7e2ce3136a21::t_031a5dce591582 2384-2387
+  s_ef7e2ce3136a21::t_4aa72a5c93f9c1 2801-2895
+  s_ef7e2ce3136a21::t_85afa7425f9857 3232-3233
+  s_ef7e2ce3136a21::t_8a55e6231a405b 230-233,235,239,244
+  s_ef7e2ce3136a21::t_12129499662161 1473-1474,1476-1477
+  s_ef7e2ce3136a21::t_8d7f0d7f26c02c 3315
+  s_ef7e2ce3136a21::t_9ac48c92edadfc 271-276
+  s_ef7e2ce3136a21::t_24a49f466afed7 2103
+  s_ef7e2ce3136a21::t_deae36f282d332 2488-2489
+  s_ef7e2ce3136a21::t_27f69f8f58243c 3009
+  s_ef7e2ce3136a21::t_4f3af41808a53b 1499-1502
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "a542936327fd5cd37a068af271fa3bb386759f5e",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
