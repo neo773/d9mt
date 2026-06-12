@@ -113,10 +113,20 @@ CPP_SOURCES+=(
   "$V/src/vulkan/vulkan_names.cpp"
 )
 
-# our stub layer
+# SPIRV-Cross (verbatim Khronos): SPIR-V -> MSL for the Draw stage
+# (d9mt_shader.cpp), same TU set as scripts/build.sh
+SC="$ROOT/vendor/spirv-cross"
 CPP_SOURCES+=(
-  "$ROOT/src/d3d9fe/stubs.cpp"
+  "$SC/spirv_cross.cpp"
+  "$SC/spirv_parser.cpp"
+  "$SC/spirv_cross_parsed_ir.cpp"
+  "$SC/spirv_cfg.cpp"
+  "$SC/spirv_glsl.cpp"
+  "$SC/spirv_msl.cpp"
 )
+
+# our Metal backend + remaining stub layer (everything in src/d3d9fe)
+for f in "$ROOT"/src/d3d9fe/*.cpp; do CPP_SOURCES+=("$f"); done
 
 C_SOURCES=(
   "$V/src/util/sha1/sha1.c"
@@ -133,9 +143,16 @@ objname() { # unique object name from path relative to repo root
 PIDS=()
 FAILED=0
 NJOBS=8
+BACKEND_HDR="$ROOT/src/d3d9fe/d9mt_backend.h"
+DRAW_HDR="$ROOT/src/d3d9fe/d9mt_draw.h"
 compile_one() { # <src> <compiler...>
   local src="$1"; shift
   local obj; obj="$(objname "$src")"
+  # backend TUs additionally depend on the shared backend headers
+  if [[ "$src" == "$ROOT/src/d3d9fe/"* && -f "$obj" \
+     && ( "$BACKEND_HDR" -nt "$obj" || "$DRAW_HDR" -nt "$obj" ) ]]; then
+    rm -f "$obj"
+  fi
   if [[ ! -f "$obj" || "$src" -nt "$obj" ]]; then
     echo "[dxvkfe] CC $(basename "$src")"
     "$@" -c -o "$obj" "$src" || { echo "[dxvkfe] FAILED: $src"; rm -f "$obj"; return 1; }
@@ -172,6 +189,8 @@ echo "[dxvkfe] linking d3d9fe.dll"
   -Wl,--gc-sections \
   -static -static-libgcc -static-libstdc++ \
   -Wl,--file-alignment=4096,--enable-stdcall-fixup,--kill-at \
+  -L "$ROOT/prebuilt" -lwinemetal \
+  -L "$BUILD/d9mtmetal" -ld9mtmetal32 \
   -luser32 -lgdi32 -lsetupapi -luuid \
   2> "$BUILD/dxvkfe-link.log"
 LINK_RC=$?

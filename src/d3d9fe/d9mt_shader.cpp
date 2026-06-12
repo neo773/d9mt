@@ -1,0 +1,412 @@
+// d9mt: Metal backend — DxvkShader -> MSL translation + caches.
+//
+// Mirrors the WORKING in-process chain of the hand-rolled driver
+// (src/d3d9/d9mt_translate.cpp + d3d9.cpp CompileShader):
+//   DxvkShader::getCode(nullptr, moduleInfo)   [shader-defined bindings kept,
+//     undefined-input elimination / RT swizzles / flat shading applied]
+//   -> SPIRV-Cross CompilerMSL (msl 3.0, argument buffers tier 2)
+//   -> d9mtmetal NEW_LIBRARY_FROM_SOURCE (runtime MSL compile)
+//   -> MTLLibrary_newFunctionWithConstants ("main0", ALL function constants)
+//
+// Reflection differences from d9mt_translate.cpp: resources are identified
+// by their SPIR-V Binding decoration (== DXVK resource slot id, BACKEND-
+// SURFACE §4.2), not by dxso variable names — this also covers the
+// fixed-function shader generator. Sampler metadata (heap-index push dwords)
+// and push-block layout come from the shader's DxvkPipelineLayoutBuilder.
+//
+// All caches are process-global and hold Rc<DxvkShader> refs for the process
+// lifetime (upstream's pipeline manager has the same lifetime policy).
+
+#include <cstring>
+#include <map>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
+#include <windows.h>
+
+#include "d9mt_draw.h"
+
+#include "../../vendor/spirv-cross/spirv_msl.hpp"
+
+namespace dxvk::d9mt {
+
+  // ==========================================================================
+  // sampler heap: shadow array living inside a shared MTLBuffer so the draw
+  // path binds it directly ([[buffer(samplerHeapIndex)]]). Written by the
+  // DxvkSampler ctor/dtor (under the sampler-pool mutex) BEFORE any draw
+  // that references the slot is committed; live draws never reference slots
+  // being (re)written, so CPU stores racing GPU reads of other slots are
+  // benign (aligned 8-byte stores).
+  // ==========================================================================
+
+  namespace {
+    struct SamplerHeapStorage {
+      uint64_t*    data = nullptr;
+      obj_handle_t buffer = 0;
+    };
+
+    SamplerHeapStorage& samplerHeapStorage() {
+      static SamplerHeapStorage s_storage = []() -> SamplerHeapStorage {
+        SamplerHeapStorage result = { };
+
+        const size_t size = size_t(SamplerHeapSize) * sizeof(uint64_t);
+
+        void* mem = VirtualAlloc(nullptr, size,
+          MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+        obj_handle_t device = mtlDevice();
+
+        if (mem && device) {
+          WMTBufferInfo info = { };
+          info.length  = size;
+          info.options = WMTResourceStorageModeShared;
+          info.memory.set(mem);
+
+          result.buffer = MTLDevice_newBuffer(device, &info);
+        }
+
+        if (mem && result.buffer) {
+          result.data = reinterpret_cast<uint64_t*>(mem);
+        } else {
+          logf("d9mt: sampler heap buffer creation failed (mem=%p dev=%llx)"
+               " — falling back to CPU-only shadow",
+            mem, (unsigned long long)device);
+          if (mem)
+            VirtualFree(mem, 0, MEM_RELEASE);
+          static uint64_t s_fallback[SamplerHeapSize] = { };
+          result.data = s_fallback;
+          result.buffer = 0;
+        }
+        return result;
+      }();
+      return s_storage;
+    }
+  }
+
+  uint64_t* samplerHeapData() {
+    return samplerHeapStorage().data;
+  }
+
+  obj_handle_t samplerHeapBuffer() {
+    return samplerHeapStorage().buffer;
+  }
+
+
+  // ==========================================================================
+  // compile cache
+  // ==========================================================================
+
+  struct CompiledShader::FunctionCache {
+    std::mutex mutex;
+    // key = the spec values supplied, in specConstants order
+    std::map<std::vector<uint32_t>, obj_handle_t> functions;
+  };
+
+  namespace {
+
+    // shared-block source offset in m_state.pc.constantData for a given
+    // push data block index (same formula as the private static
+    // DxvkContext::computePushDataBlockOffset)
+    uint32_t pushDataBlockSrcOffset(uint32_t index) {
+      return index
+        ? MaxSharedPushDataSize + MaxPerStagePushDataSize * (index - 1u)
+        : 0u;
+    }
+
+
+    std::unique_ptr<CompiledShader> compileShader(
+      const Rc<DxvkShader>&             shader,
+      const DxvkShaderModuleCreateInfo& moduleInfo) {
+      auto result = std::make_unique<CompiledShader>();
+      result->stage = shader->info().stage;
+
+      std::string msl;
+      std::unordered_map<uint32_t, uint32_t> slotToAbId;
+
+      // -------- SPIR-V -> MSL + reflection
+      try {
+        SpirvCodeBuffer code = shader->getCode(nullptr, moduleInfo);
+
+        spirv_cross::CompilerMSL compiler(code.data(), code.dwords());
+
+        spirv_cross::CompilerMSL::Options opts;
+        opts.set_msl_version(3, 0, 0);
+        opts.argument_buffers = true;
+        opts.argument_buffers_tier =
+          spirv_cross::CompilerMSL::Options::ArgumentBuffersTier::Tier2;
+        compiler.set_msl_options(opts);
+
+        msl = compiler.compile();
+
+        spirv_cross::ShaderResources res = compiler.get_shader_resources();
+
+        auto reflectSet0 = [&] (const spirv_cross::Resource& r) {
+          uint32_t set = compiler.get_decoration(r.id, spv::DecorationDescriptorSet);
+          if (set != 0u)
+            return;
+
+          uint32_t slot = compiler.get_decoration(r.id, spv::DecorationBinding);
+          uint32_t abId = compiler.get_automatic_msl_resource_binding(r.id);
+
+          // unassigned (-1) = the variable never made it into the argument
+          // buffer (dead resource) — it has no AB slot to write
+          if (abId == uint32_t(-1))
+            return;
+
+          slotToAbId.insert({ slot, abId });
+          result->abEntryCount = std::max(result->abEntryCount, abId + 1u);
+        };
+
+        for (const auto& r : res.uniform_buffers)
+          reflectSet0(r);
+        for (const auto& r : res.storage_buffers)
+          reflectSet0(r);
+        for (const auto& r : res.separate_images)
+          reflectSet0(r);
+
+        // SPIRV-Cross binds the set-0 argument buffer at [[buffer(0)]]
+        // (= set index); the working driver hardcodes this too.
+        if (result->abEntryCount)
+          result->abBufferIndex = 0;
+
+        for (const auto& r : res.push_constant_buffers)
+          result->pushBufferIndex =
+            int32_t(compiler.get_automatic_msl_resource_binding(r.id));
+
+        for (const auto& r : res.separate_samplers) {
+          uint32_t set = compiler.get_decoration(r.id, spv::DecorationDescriptorSet);
+          if (set == shader->info().samplerHeap.getSet())
+            result->samplerHeapIndex =
+              int32_t(compiler.get_automatic_msl_resource_binding(r.id));
+        }
+
+        for (const auto& sc : compiler.get_specialization_constants()) {
+          const auto& cst  = compiler.get_constant(sc.id);
+          const auto& type = compiler.get_type(cst.constant_type);
+
+          ShaderSpecConstant info = { };
+          info.id           = sc.constant_id;
+          info.defaultValue = cst.scalar(0, 0);
+          info.isBool       = type.basetype == spirv_cross::SPIRType::Boolean;
+          result->specConstants.push_back(info);
+        }
+      } catch (const DxvkError& e) {
+        Logger::err(str::format("d9mt: shader translation failed (",
+          shader->debugName(), "): ", e.message()));
+        return nullptr;
+      } catch (const std::exception& e) {
+        Logger::err(str::format("d9mt: shader translation failed (",
+          shader->debugName(), "): ", e.what()));
+        return nullptr;
+      }
+
+      // -------- layout metadata: resource refs, samplers, push blocks
+      DxvkPipelineLayoutBuilder layout = shader->getLayout();
+      DxvkPipelineBindingRange bindings = layout.getBindings();
+
+      for (size_t i = 0; i < bindings.bindingCount; i++) {
+        const DxvkShaderDescriptor& binding = bindings.bindings[i];
+
+        if (binding.getDescriptorType() == VK_DESCRIPTOR_TYPE_SAMPLER) {
+          ShaderSamplerRef ref = { };
+          ref.slot        = uint16_t(binding.getBinding());
+          ref.blockOffset = uint16_t(binding.getBlockOffset());
+          result->samplers.push_back(ref);
+          continue;
+        }
+
+        if (binding.getSet() != 0u)
+          continue;
+
+        auto entry = slotToAbId.find(binding.getBinding());
+        if (entry == slotToAbId.end())
+          continue; // optimized out of the SPIR-V
+
+        ShaderResourceRef ref = { };
+        ref.slot            = uint16_t(binding.getBinding());
+        ref.abId            = uint16_t(entry->second);
+        ref.type            = binding.getDescriptorType();
+        ref.isUniformBuffer = binding.isUniformBuffer()
+          || binding.getDescriptorType() == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        result->resources.push_back(ref);
+      }
+
+      uint32_t pushMask = layout.getPushDataMask();
+      for (uint32_t index = 0; index < DxvkPushDataBlock::MaxBlockCount; index++) {
+        if (!(pushMask & (1u << index)))
+          continue;
+
+        DxvkPushDataBlock block = layout.getPushDataBlock(index);
+
+        ShaderPushBlock info = { };
+        info.dstOffset    = block.getOffset();
+        info.size         = block.getSize();
+        info.srcOffset    = pushDataBlockSrcOffset(index);
+        info.resourceMask = block.getResourceDwordMask();
+        result->pushBlocks.push_back(info);
+
+        result->pushDataSize = std::max(result->pushDataSize,
+          info.dstOffset + info.size);
+      }
+
+      if (result->pushDataSize > MaxTotalPushDataSize) {
+        Logger::err(str::format("d9mt: shader push data exceeds limit: ",
+          result->pushDataSize));
+        return nullptr;
+      }
+
+      // -------- MSL -> MTLLibrary (d9mtmetal runtime compile)
+      obj_handle_t device = mtlDevice();
+      if (!device)
+        return nullptr;
+
+      d9mt_newlibrary_params lp;
+      std::memset(&lp, 0, sizeof(lp));
+      lp.device     = device;
+      lp.source_ptr = uint64_t(uintptr_t(msl.data()));
+      lp.source_len = msl.size();
+      lp.fast_math  = 1;
+
+      int status = D9MT_UnixCall(D9MT_FUNC_NEW_LIBRARY_FROM_SOURCE, &lp);
+      if (status != 0 || !lp.ret_library) {
+        Logger::err(str::format("d9mt: MSL compile failed (",
+          shader->debugName(), "), status ", status));
+        if (lp.ret_error)
+          logNSError("d9mt: MSL compile", lp.ret_error);
+        return nullptr;
+      }
+      if (lp.ret_error)
+        NSObject_release(lp.ret_error); // warnings only
+
+      result->library   = lp.ret_library;
+      result->functions = new CompiledShader::FunctionCache();
+
+      logf("d9mt: shader compiled: %s (%zu bytes MSL, ab=%u push=%d heap=%d "
+           "res=%zu smp=%zu spec=%zu)",
+        shader->debugName().c_str(), msl.size(), result->abEntryCount,
+        result->pushBufferIndex, result->samplerHeapIndex,
+        result->resources.size(), result->samplers.size(),
+        result->specConstants.size());
+
+      return result;
+    }
+
+
+    struct CompileKey {
+      DxvkShader*                 shader;
+      DxvkShaderModuleCreateInfo  moduleInfo;
+    };
+
+    struct CompileKeyHash {
+      size_t operator () (const CompileKey& k) const {
+        return std::hash<void*>()(k.shader) ^ k.moduleInfo.hash();
+      }
+    };
+
+    struct CompileKeyEq {
+      bool operator () (const CompileKey& a, const CompileKey& b) const {
+        return a.shader == b.shader && a.moduleInfo.eq(b.moduleInfo);
+      }
+    };
+
+    struct CompileEntry {
+      Rc<DxvkShader>                  shader;   // keeps the key pointer alive
+      std::unique_ptr<CompiledShader> compiled; // null = failed (cached)
+    };
+
+    std::mutex s_compileMutex;
+    std::unordered_map<CompileKey, CompileEntry, CompileKeyHash, CompileKeyEq>
+      s_compileCache;
+
+  } // namespace
+
+
+  const CompiledShader* getCompiledShader(
+    const Rc<DxvkShader>&             shader,
+    const DxvkShaderModuleCreateInfo& moduleInfo) {
+    if (shader == nullptr)
+      return nullptr;
+
+    CompileKey key = { shader.ptr(), moduleInfo };
+
+    std::lock_guard<std::mutex> lock(s_compileMutex);
+
+    auto entry = s_compileCache.find(key);
+    if (entry != s_compileCache.end())
+      return entry->second.compiled.get();
+
+    CompileEntry newEntry;
+    newEntry.shader   = shader;
+    newEntry.compiled = compileShader(shader, moduleInfo);
+
+    return s_compileCache.emplace(key, std::move(newEntry))
+      .first->second.compiled.get();
+  }
+
+
+  obj_handle_t getShaderFunction(
+    const CompiledShader*             shader,
+    const uint32_t*                   specData) {
+    if (!shader || !shader->library)
+      return 0;
+
+    // resolve the value of every declared function constant
+    std::vector<uint32_t> values(shader->specConstants.size());
+
+    for (size_t i = 0; i < shader->specConstants.size(); i++) {
+      const auto& sc = shader->specConstants[i];
+
+      if (sc.id < MaxNumSpecConstants)
+        values[i] = specData[sc.id];
+      else if (sc.id == MaxNumSpecConstants)
+        values[i] = 1u; // gate: spec data is baked into this function
+      else
+        values[i] = sc.defaultValue;
+    }
+
+    auto* cache = shader->functions;
+    std::lock_guard<std::mutex> lock(cache->mutex);
+
+    auto entry = cache->functions.find(values);
+    if (entry != cache->functions.end())
+      return entry->second;
+
+    obj_handle_t function = 0;
+    obj_handle_t pool = NSAutoreleasePool_alloc_init();
+
+    if (values.empty()) {
+      function = MTLLibrary_newFunction(shader->library, "main0");
+      if (!function)
+        Logger::err("d9mt: getShaderFunction: main0 not found");
+    } else {
+      // supply ALL declared function constants — creating the function with
+      // any constant missing crashes PSO creation (hard-won lesson)
+      std::vector<WMTFunctionConstant> consts(values.size());
+
+      for (size_t i = 0; i < values.size(); i++) {
+        std::memset(&consts[i], 0, sizeof(consts[i]));
+        consts[i].data.set(&values[i]);
+        consts[i].type = shader->specConstants[i].isBool
+          ? WMTDataTypeBool
+          : WMTDataTypeUInt;
+        consts[i].index = uint16_t(shader->specConstants[i].id);
+      }
+
+      obj_handle_t err = 0;
+      function = MTLLibrary_newFunctionWithConstants(shader->library, "main0",
+        consts.data(), uint32_t(consts.size()), &err);
+
+      if (!function)
+        logNSError("d9mt: newFunctionWithConstants", err);
+      else if (err)
+        NSObject_release(err);
+    }
+
+    NSObject_release(pool);
+
+    cache->functions.insert({ std::move(values), function });
+    return function;
+  }
+
+}

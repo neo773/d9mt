@@ -101,7 +101,11 @@ static NTSTATUS d9mt_new_render_pso(void *args) {
       MTLVertexBufferLayoutDescriptor *ld = vd.layouts[l->buffer_index];
       ld.stride = l->stride;
       ld.stepFunction = (MTLVertexStepFunction)l->step_function;
-      ld.stepRate = l->step_rate ? l->step_rate : 1;
+      /* Constant step requires stepRate 0; everything else needs >= 1 */
+      if (ld.stepFunction == MTLVertexStepFunctionConstant)
+        ld.stepRate = 0;
+      else
+        ld.stepRate = l->step_rate ? l->step_rate : 1;
     }
     desc.vertexDescriptor = vd;
   }
