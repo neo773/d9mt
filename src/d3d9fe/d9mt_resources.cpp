@@ -19,6 +19,7 @@
 //
 // See docs/METAL-BACKEND-NOTES.md "Stage decisions: resources".
 
+#include <atomic>
 #include <cstring>
 #include <unordered_map>
 
@@ -372,10 +373,23 @@ namespace dxvk {
     bool isDepthStencil = (key.aspects
       & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) != 0u;
 
-    if (!isDepthStencil && tex.sampleCount <= 1u)
+    if (!isDepthStencil && tex.sampleCount <= 1u) {
       swizzle = d9mtComposeSwizzle(key.format, key.packedSwizzle);
-    else if (key.packedSwizzle && !d9mtIsIdentitySwizzle(d9mtComposeSwizzle(key.format, key.packedSwizzle)))
-      Logger::err("d9mt: createImageView: dropping swizzle on depth/MSAA view");
+    } else if (key.packedSwizzle && !d9mtIsIdentitySwizzle(d9mtComposeSwizzle(key.format, key.packedSwizzle))) {
+      // Genuinely unimplementable (Metal forbids swizzled depth/MSAA views),
+      // but benign in practice: DSV swizzles are zeroed by the front-end
+      // (BACKEND-SURFACE §3.3, never reaches this branch), so this is a
+      // SAMPLED depth/MSAA view losing only component replication/forcing
+      // (e.g. alpha-one) — shaders still read the stored value in .r.
+      // Warn once with details instead of erroring per view.
+      static std::atomic<bool> s_warned = { false };
+      if (!s_warned.exchange(true)) {
+        Logger::warn(str::format("d9mt: createImageView: dropping swizzle on ",
+          isDepthStencil ? "depth" : "MSAA", " view (format ",
+          uint32_t(key.format), ", packedSwizzle 0x",
+          std::hex, uint32_t(key.packedSwizzle), ") — further drops not logged"));
+      }
+    }
 
     uint64_t gpuResourceId = 0u;
 

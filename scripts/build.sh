@@ -125,6 +125,10 @@ build_shader_test() { # <name>
 
 build_shader_test shadertri
 build_shader_test texquad
+# fog + multi-sampler probes (vs_2_0/ps_2_0 blobs: SM2 keeps the dxso fog
+# stage; regenerate with tools/hlsl2dxso.exe under wine)
+build_shader_test fogtest
+build_shader_test multisampler
 
 echo "[build] compiling extest.exe"
 i686-w64-mingw32-gcc -O2 \
@@ -138,6 +142,18 @@ i686-w64-mingw32-gcc -O2 \
   "$ROOT/test/querytest.c" \
   -ld3d9 -luser32 -lgdi32
 
+echo "[build] compiling resettest.exe"
+i686-w64-mingw32-gcc -O2 \
+  -o "$BUILD/resettest.exe" \
+  "$ROOT/test/resettest.c" \
+  -ld3d9 -luser32 -lgdi32
+
+echo "[build] compiling modeprobe.exe (win32 display-mode probe, no d3d9)"
+i686-w64-mingw32-gcc -O2 \
+  -o "$BUILD/modeprobe.exe" \
+  "$ROOT/test/modeprobe.c" \
+  -luser32 -lgdi32
+
 # depthtri + resolvetest reuse the shadertri bytecode headers
 if [[ -f "$BUILD/shadertri_vs_bytecode.h" ]]; then
   echo "[build] compiling depthtri.exe (reuses shadertri bytecode)"
@@ -150,6 +166,12 @@ if [[ -f "$BUILD/shadertri_vs_bytecode.h" ]]; then
   i686-w64-mingw32-gcc -O2 \
     -o "$BUILD/resolvetest.exe" \
     "$ROOT/test/resolvetest.c" \
+    -I "$BUILD" \
+    -ld3d9 -luser32 -lgdi32
+  echo "[build] compiling dsclear.exe (reuses shadertri bytecode)"
+  i686-w64-mingw32-gcc -O2 \
+    -o "$BUILD/dsclear.exe" \
+    "$ROOT/test/dsclear.c" \
     -I "$BUILD" \
     -ld3d9 -luser32 -lgdi32
 fi

@@ -460,6 +460,32 @@ namespace dxvk::d9mt {
   }
 
 
+  // Compute bridge for the D3D9FormatHelper conversion path: the vendored
+  // DxvkCommandList::cmdBindPipeline / cmdDispatch route through the fake
+  // Vulkan device dispatch (d9mt_device.cpp) into these. The threadgroup
+  // size travels with the PSO (wmtcmd_compute_setpso carries both).
+  void cmdListBindComputePipeline(const void* list, obj_handle_t pso,
+    const WMTSize& threadgroupSize) {
+    auto& state = cmdListState(list);
+
+    wmtcmd_compute_setpso cmd = { };
+    cmd.type = WMTComputeCommandSetPSO;
+    cmd.pso = pso;
+    cmd.threadgroup_size = threadgroupSize;
+    encodeComputeCmd(state, &cmd);
+  }
+
+
+  void cmdListDispatch(const void* list, uint32_t x, uint32_t y, uint32_t z) {
+    auto& state = cmdListState(list);
+
+    wmtcmd_compute_dispatch cmd = { };
+    cmd.type = WMTComputeCommandDispatch;
+    cmd.size = { x, y, z };
+    encodeComputeCmd(state, &cmd);
+  }
+
+
   // ==========================================================================
   // Draw stage support (consumed by the DxvkContext draw path below; see
   // METAL-BACKEND-NOTES.md "Stage decisions: draw").
@@ -928,6 +954,43 @@ namespace dxvk::d9mt {
   }
 
 
+  // DSSO for the scissored depth/stencil clear draw (clearImageView): the
+  // cleared aspect writes unconditionally (depth: write-always at the
+  // viewport-encoded value; stencil: op Replace at the stencil reference),
+  // the other aspect is left untouched.
+  static obj_handle_t getDepthStencilClearDsso(bool clearDepth, bool clearStencil) {
+    static obj_handle_t s_clearDsso[4] = { };
+
+    std::lock_guard<std::mutex> lock(s_dssoMutex);
+
+    obj_handle_t& cached =
+      s_clearDsso[(clearDepth ? 1u : 0u) | (clearStencil ? 2u : 0u)];
+    if (cached)
+      return cached;
+
+    WMTDepthStencilInfo info = { };
+    info.depth_compare_function = WMTCompareFunctionAlways;
+    info.depth_write_enabled = clearDepth;
+
+    if (clearStencil) {
+      for (auto* s : { &info.front_stencil, &info.back_stencil }) {
+        s->enabled = true;
+        s->depth_stencil_pass_op    = WMTStencilOperationReplace;
+        s->stencil_fail_op          = WMTStencilOperationKeep;
+        s->depth_fail_op            = WMTStencilOperationKeep;
+        s->stencil_compare_function = WMTCompareFunctionAlways;
+        s->write_mask = 0xffu;
+        s->read_mask  = 0xffu;
+      }
+    }
+
+    cached = MTLDevice_newDepthStencilState(mtlDevice(), &info);
+    if (!cached)
+      Logger::err("d9mt: ds clear: newDepthStencilState failed");
+    return cached;
+  }
+
+
   // --------------------------------------------------------------------------
   // per-context draw state (single CS-thread consumer; the map itself is
   // mutex-guarded like the other side tables)
@@ -1119,6 +1182,14 @@ namespace dxvk {
 
   void DxvkCommandList::init() {
     m_cmd = DxvkCommandSubmissionInfo();
+
+    // Smuggle the list pointer through the exec VkCommandBuffer slot so the
+    // vendored inline cmd* methods (cmdBindPipeline / cmdDispatch /
+    // cmdPipelineBarrier — D3D9FormatHelper path) can reach the Metal side
+    // state via the fake device dispatch (d9mt_device.cpp). VkCommandBuffer
+    // is a dispatchable (pointer-sized) handle and nothing else reads it.
+    m_cmd.cmdBuffers[uint32_t(DxvkCmdBuffer::ExecBuffer)] =
+      reinterpret_cast<VkCommandBuffer>(this);
   }
 
 
@@ -2150,6 +2221,120 @@ namespace dxvk {
   }
 
 
+  // Scissored depth/stencil rect clear (clearImageView partial path): a
+  // standalone fullscreen-triangle pass over the view's depth+stencil
+  // attachments (both planes always bound, unified-DS rule) where ONLY the
+  // requested aspects write. Both attachments load+store; the clear depth
+  // value is encoded as viewport znear (the VS emits z = 0, so the written
+  // depth is exactly znear), the stencil value as the DSSO stencil reference
+  // with op Replace; the scissor rect restricts the write to the given rect.
+  // Returns false on failure (caller stays fail-loud).
+  static bool clearDepthStencilRect(
+          DxvkCommandList*          cmd,
+    const Rc<DxvkImageView>&        imageView,
+          VkOffset3D                offset,
+          VkExtent3D                extent,
+          VkImageAspectFlags        aspect,
+          VkClearValue              value) {
+    obj_handle_t viewHandle = obj_handle_t(imageView->handle());
+
+    if (!viewHandle) {
+      Logger::err("d9mt: clearImageView: depth view has no Metal texture");
+      return false;
+    }
+
+    if (imageView->info().mipCount != 1u) {
+      // d3d9 DSVs are single-mip; the rect would not scale across levels
+      Logger::err("d9mt: clearImageView: partial DS clear of multi-mip view not implemented");
+      return false;
+    }
+
+    uint32_t sampleCount = uint32_t(imageView->image()->info().sampleCount);
+
+    obj_handle_t pso = d9mt::getDepthStencilClearPso(sampleCount);
+    obj_handle_t dsso = d9mt::getDepthStencilClearDsso(
+      aspect & VK_IMAGE_ASPECT_DEPTH_BIT,
+      aspect & VK_IMAGE_ASPECT_STENCIL_BIT);
+
+    if (!pso || !dsso)
+      return false;
+
+    VkExtent3D viewExtent = imageView->mipLevelExtent(0);
+
+    // clamp the rect into the view (Metal validates the scissor)
+    uint64_t x0 = uint64_t(std::max(offset.x, 0));
+    uint64_t y0 = uint64_t(std::max(offset.y, 0));
+    uint64_t x1 = std::min(uint64_t(offset.x) + extent.width,  uint64_t(viewExtent.width));
+    uint64_t y1 = std::min(uint64_t(offset.y) + extent.height, uint64_t(viewExtent.height));
+
+    if (x0 >= x1 || y0 >= y1)
+      return true; // empty rect: nothing to clear
+
+    double clearDepth = double(value.depthStencil.depth);
+    clearDepth = std::min(std::max(clearDepth, 0.0), 1.0);
+
+    for (uint32_t layer = 0; layer < imageView->info().layerCount; layer++) {
+      WMTRenderPassInfo pass = { };
+      pass.render_target_width  = viewExtent.width;
+      pass.render_target_height = viewExtent.height;
+
+      pass.depth.texture = viewHandle;
+      pass.depth.slice = uint16_t(layer);
+      pass.depth.load_action  = WMTLoadActionLoad;
+      pass.depth.store_action = WMTStoreActionStore;
+
+      pass.stencil.texture = viewHandle;
+      pass.stencil.slice = uint16_t(layer);
+      pass.stencil.load_action  = WMTLoadActionLoad;
+      pass.stencil.store_action = WMTStoreActionStore;
+
+      obj_handle_t enc = d9mt::cmdListBeginRenderPass(cmd, pass);
+      if (!enc)
+        return false;
+
+      wmtcmd_render_setpso setPso = { };
+      wmtcmd_render_setdsso setDsso = { };
+      wmtcmd_render_setviewport setVp = { };
+      wmtcmd_render_setscissorrect setSc = { };
+      wmtcmd_render_draw drawCmd = { };
+
+      setPso.type = WMTRenderCommandSetPSO;
+      setPso.next.set(&setDsso);
+      setPso.pso = pso;
+
+      setDsso.type = WMTRenderCommandSetDSSO;
+      setDsso.next.set(&setVp);
+      setDsso.dsso = dsso;
+      setDsso.stencil_ref = uint8_t(value.depthStencil.stencil);
+
+      // VS z = 0 ⇒ written depth = znear (zfar never sampled)
+      setVp.type = WMTRenderCommandSetViewport;
+      setVp.next.set(&setSc);
+      setVp.viewport = { 0.0, 0.0,
+                         double(viewExtent.width), double(viewExtent.height),
+                         clearDepth, 1.0 };
+
+      setSc.type = WMTRenderCommandSetScissorRect;
+      setSc.next.set(&drawCmd);
+      setSc.scissor_rect = { x0, y0, x1 - x0, y1 - y0 };
+
+      drawCmd.type = WMTRenderCommandDraw;
+      drawCmd.primitive_type = WMTPrimitiveTypeTriangle;
+      drawCmd.vertex_start = 0;
+      drawCmd.vertex_count = 3;
+      drawCmd.instance_count = 1;
+      drawCmd.base_instance = 0;
+
+      MTLRenderCommandEncoder_encodeCommands(enc,
+        reinterpret_cast<const wmtcmd_base*>(&setPso));
+
+      d9mt::cmdListEndEncoder(cmd);
+    }
+
+    return true;
+  }
+
+
   void DxvkContext::clearImageView(
     const Rc<DxvkImageView>&    imageView,
           VkOffset3D            offset,
@@ -2185,23 +2370,24 @@ namespace dxvk {
       return;
     }
 
-    // Partial clear: clear a temporary image of matching format via a
+    // Partial depth/stencil clear (any aspect subset, any sample count):
+    // scissored fullscreen-triangle draw writing only the requested aspects
+    // (the GTA IV black-world case: the game clears the depth aspect of its
+    // D24S8 surface with a sub-viewport rect every frame).
+    if (formatInfo->aspectMask
+      & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
+      if (clearDepthStencilRect(m_cmd.ptr(), imageView, offset, extent, aspect, value))
+        m_cmd->track(image, DxvkAccess::Write);
+      return;
+    }
+
+    // Partial color clear: clear a temporary image of matching format via a
     // render pass, then blit-copy the rect into the destination. Avoids
     // needing per-format CPU pixel packing or a draw-based scissored clear.
     if (image->info().sampleCount != VK_SAMPLE_COUNT_1_BIT) {
-      Logger::err("d9mt: clearImageView: partial clear of multisampled image not implemented");
+      Logger::err("d9mt: clearImageView: partial clear of multisampled color image not implemented");
       return;
     }
-
-    if ((formatInfo->aspectMask & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))
-     && aspect != formatInfo->aspectMask) {
-      // texture-to-texture copies always copy both planes
-      Logger::err("d9mt: clearImageView: partial single-aspect depth-stencil clear not implemented");
-      return;
-    }
-
-    bool isDepth = bool(formatInfo->aspectMask
-      & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT));
 
     DxvkImageCreateInfo tmpInfo = { };
     tmpInfo.type        = VK_IMAGE_TYPE_2D;
@@ -2212,8 +2398,7 @@ namespace dxvk {
     tmpInfo.numLayers   = 1u;
     tmpInfo.mipLevels   = 1u;
     tmpInfo.usage       = VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                        | (isDepth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
-                                   : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+                        | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     tmpInfo.stages      = VK_PIPELINE_STAGE_TRANSFER_BIT;
     tmpInfo.access      = VK_ACCESS_TRANSFER_READ_BIT;
     tmpInfo.tiling      = VK_IMAGE_TILING_OPTIMAL;
@@ -2230,16 +2415,14 @@ namespace dxvk {
 
     DxvkImageViewKey tmpViewKey = { };
     tmpViewKey.viewType   = VK_IMAGE_VIEW_TYPE_2D;
-    tmpViewKey.usage      = isDepth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
-                                    : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    tmpViewKey.usage      = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     tmpViewKey.format     = tmpInfo.format;
     tmpViewKey.aspects    = lookupFormatInfo(tmpInfo.format)->aspectMask;
     tmpViewKey.mipIndex   = 0u;
     tmpViewKey.mipCount   = 1u;
     tmpViewKey.layerIndex = 0u;
     tmpViewKey.layerCount = 1u;
-    tmpViewKey.layout     = isDepth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-                                    : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    tmpViewKey.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     Rc<DxvkImageView> tmpView = tmpImage->createView(tmpViewKey);
 
@@ -2410,9 +2593,25 @@ namespace dxvk {
 
     auto& state = d9mt::cmdListState(m_cmd.ptr());
 
+    // GTA IV black-texture root cause: the prebuilt winemetal bridge does NOT
+    // implement WMTBlitCommandCopyFromBufferToTextureWithBlitOption (its
+    // dylib has no copyFromBuffer:...options: selector) — encoding it made
+    // EVERY texture upload silently vanish. Use the plain, proven command for
+    // option-less copies (all color formats); packed depth-stencil locks
+    // (option != None) cannot be expressed and are skipped loudly.
+    if (option != WMTBlitOptionNone) {
+      static bool s_warned = false;
+      if (!std::exchange(s_warned, true))
+        Logger::err("d9mt: copyBufferToImage: depth-stencil blit options not "
+          "supported by winemetal — upload skipped");
+      m_cmd->track(dstImage, DxvkAccess::Write);
+      m_cmd->track(srcBuffer, DxvkAccess::Read);
+      return;
+    }
+
     for (uint32_t layer = 0; layer < dstSubresource.layerCount; layer++) {
-      wmtcmd_blit_copy_from_buffer_to_texture_withblitoption cmd = { };
-      cmd.type = WMTBlitCommandCopyFromBufferToTextureWithBlitOption;
+      wmtcmd_blit_copy_from_buffer_to_texture cmd = { };
+      cmd.type = WMTBlitCommandCopyFromBufferToTexture;
       cmd.src = obj_handle_t(srcSlice.buffer);
       cmd.src_offset = srcSlice.offset
         + VkDeviceSize(layer) * bytesPerSlice * blockCount.depth;
@@ -2421,8 +2620,7 @@ namespace dxvk {
       cmd.size = { dstExtent.width, dstExtent.height, dstExtent.depth };
       cmd.dst = obj_handle_t(dstImage->handle());
       cmd.slice = dstSubresource.baseArrayLayer + layer;
-      cmd.level = uint16_t(dstSubresource.mipLevel);
-      cmd.options = uint16_t(option);
+      cmd.level = dstSubresource.mipLevel;
       cmd.origin = { uint64_t(dstOffset.x), uint64_t(dstOffset.y), uint64_t(dstOffset.z) };
       d9mt::encodeBlitCmd(state, &cmd);
     }

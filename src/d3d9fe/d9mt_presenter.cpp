@@ -362,6 +362,117 @@ fragment d9mt_resolve_ds_out d9mt_resolve_ds_ps(
 
 
   // ==========================================================================
+  // partial depth/stencil clear pipeline (DxvkContext::clearImageView):
+  // fullscreen triangle at z = 0 with a void fragment function. The clear
+  // depth value is encoded as viewport znear == zfar (depth written =
+  // znear + z_ndc * (zfar - znear) = znear), the stencil clear value as the
+  // DSSO stencil reference with op Replace; the scissor rect restricts the
+  // clear to the requested region. Own MTLLibrary: a compile failure here
+  // must not take down the blit / resolve pipelines above.
+  // ==========================================================================
+
+  namespace {
+
+    const char g_dsClearMsl[] = R"(
+#include <metal_stdlib>
+using namespace metal;
+
+vertex float4 d9mt_dsclear_vs(uint vid [[vertex_id]]) {
+  float2 uv = float2((vid << 1) & 2, vid & 2);
+  return float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+}
+
+fragment void d9mt_dsclear_fs() {}
+)";
+
+    bool         s_dsClearInitFailed = false;
+    obj_handle_t s_dsClearLibrary = 0;
+    obj_handle_t s_dsClearVs = 0;
+    obj_handle_t s_dsClearFs = 0;
+    std::vector<std::pair<uint32_t, obj_handle_t>> s_dsClearPsoCache;
+
+    bool ensureDsClearFunctionsLocked() {
+      if (s_dsClearVs)
+        return true;
+      if (s_dsClearInitFailed)
+        return false;
+
+      obj_handle_t device = mtlDevice();
+      if (!device) {
+        s_dsClearInitFailed = true;
+        return false;
+      }
+
+      d9mt_newlibrary_params lp = { };
+      lp.device     = device;
+      lp.source_ptr = uint64_t(uintptr_t(g_dsClearMsl));
+      lp.source_len = sizeof(g_dsClearMsl) - 1u;
+      lp.fast_math  = 1u;
+
+      int st = D9MT_UnixCall(D9MT_FUNC_NEW_LIBRARY_FROM_SOURCE, &lp);
+      if (st != 0 || !lp.ret_library) {
+        Logger::err("d9mt: ds clear: newLibraryWithSource failed");
+        logf("d9mt: ds clear: newLibraryWithSource status %d", st);
+        if (lp.ret_error)
+          logNSError("d9mt: ds clear MSL compile", lp.ret_error);
+        s_dsClearInitFailed = true;
+        return false;
+      }
+      if (lp.ret_error)
+        NSObject_release(lp.ret_error); // compile warnings only
+
+      s_dsClearLibrary = lp.ret_library;
+      s_dsClearVs = MTLLibrary_newFunction(s_dsClearLibrary, "d9mt_dsclear_vs");
+      s_dsClearFs = MTLLibrary_newFunction(s_dsClearLibrary, "d9mt_dsclear_fs");
+
+      if (!s_dsClearVs || !s_dsClearFs) {
+        Logger::err("d9mt: ds clear: functions missing from compiled library");
+        s_dsClearInitFailed = true;
+        return false;
+      }
+      return true;
+    }
+
+  } // anonymous namespace
+
+  // non-static: used by DxvkContext::clearImageView (declared in
+  // d9mt_backend.h). All backend depth formats unify on
+  // Depth32Float_Stencil8, so the PSO is keyed by sample count alone.
+  obj_handle_t getDepthStencilClearPso(uint32_t sampleCount) {
+    std::lock_guard<std::mutex> lock(s_blitMutex);
+
+    for (const auto& e : s_dsClearPsoCache) {
+      if (e.first == sampleCount)
+        return e.second;
+    }
+
+    if (!ensureDsClearFunctionsLocked())
+      return 0;
+
+    WMTRenderPipelineInfo info = { };
+    info.rasterization_enabled = true;
+    info.raster_sample_count = uint8_t(sampleCount ? sampleCount : 1u);
+    info.depth_pixel_format   = WMTPixelFormatDepth32Float_Stencil8;
+    info.stencil_pixel_format = WMTPixelFormatDepth32Float_Stencil8;
+    info.vertex_function = s_dsClearVs;
+    info.fragment_function = s_dsClearFs;
+    info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle;
+    info.max_tessellation_factor = 16; // Metal default; 0 trips validation
+
+    obj_handle_t err = 0;
+    obj_handle_t pso = MTLDevice_newRenderPipelineState(mtlDevice(), &info, &err);
+    if (!pso) {
+      Logger::err("d9mt: ds clear: newRenderPipelineState failed");
+      logNSError("d9mt: ds clear PSO", err);
+      return 0;
+    }
+
+    s_dsClearPsoCache.push_back({ sampleCount, pso });
+    return pso;
+  }
+
+
+  // ==========================================================================
   // Blitter side state (gamma/cursor metadata + log-once flags). The
   // vendored members are Vulkan-resource-shaped; we only need a few bools.
   // Guarded by the blitter's own vendored m_mutex (per BACKEND-SURFACE §5.2).

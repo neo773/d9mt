@@ -866,6 +866,212 @@ tells you exactly what moved).
    (stays black), corner must accept (green). Verified exact; zero stub
    hits, zero err/warn in d3d9fe.log; full 8-test suite re-run green.
 
+## GTA IV black-screen fixes round 1 (2026-06-12)
+
+Diagnosis from the game's stderr: world + intro movies black while HUD
+renders. Two backend gaps, both fixed:
+
+1. **Partial single-aspect depth-stencil clearImageView implemented**
+   (d9mt_context.cpp `clearDepthStencilRect`, ~2585 hits/session: GTA IV
+   clears the DEPTH aspect of its D24S8 surface with a sub-viewport rect
+   every frame; we dropped it, depth never cleared, the scene z-rejected
+   to black). ALL partial DS clears (any aspect subset, any sample count)
+   now route through a standalone scissored fullscreen-triangle pass over
+   the view's depth+stencil attachments (both planes bound, unified-DS
+   rule; both load+store): only the cleared aspect writes. The clear DEPTH
+   value is encoded as viewport znear (the dedicated VS emits z = 0, so
+   written depth = znear exactly; no setBytes, no [[depth]] export needed
+   with a void FS — `d9mt_dsclear_vs/fs`, own MTLLibrary + per-sample-count
+   PSO cache `getDepthStencilClearPso` in d9mt_presenter.cpp); the STENCIL
+   value is the DSSO stencil reference with op Replace / write mask 0xff
+   (`getDepthStencilClearDsso` next to the resolve DSSO). Standalone pass,
+   not merged into pending passes (partial clears are immediate; the
+   deferred-clear machinery only merges full-view clears). The temp-image +
+   blit-copy partial path is now color-only; fail-louds kept for the
+   genuinely unimplementable: BC-alias clears, partial MSAA COLOR clears,
+   multi-mip partial DS views.
+2. **createBuiltInComputePipeline + compute dispatch implemented**
+   (d9mt_device.cpp; Bink intro movies decode to YUY2 surfaces whose upload
+   conversion needs the D3D9FormatHelper compute path, BACKEND-SURFACE §4.8).
+   The 7 embedded SPIR-V blobs translate through SPIRV-Cross CompilerMSL at
+   device init with DIRECT bindings (NOT the draw path's tier-2 argument
+   buffers) matching the bindResources slot convention (context item 12):
+   set-0 binding i → `[[texture(i)]]` via add_msl_resource_binding,
+   push block → `[[buffer(30)]]` (kPushConstDescSet/kPushConstBinding),
+   `texture_buffer_native` for the usamplerBuffer source. Spec constant
+   id 0 (bool, YUY2/UYVY select) becomes a Metal function constant supplied
+   at newFunctionWithConstants from the VkSpecializationInfo. Threadgroup
+   size reflected from ExecutionModeLocalSize (8x8x1) and carried in the
+   returned handle — VkPipeline = `d9mt::BuiltInComputePipeline*`
+   {pso, library, threadgroupSize} (d9mt_backend.h); fakeDestroyPipeline
+   (the ~D3D9FormatHelper teardown path, presenter item 11) releases both
+   handles and deletes the struct. Dispatch plumbing: the vendored inline
+   DxvkCommandList::cmdBindPipeline/cmdDispatch/cmdPipelineBarrier route
+   through the fake device dispatch — DxvkCommandList::init() smuggles the
+   list pointer into m_cmd.cmdBuffers[ExecBuffer] (dispatchable handle =
+   pointer; nothing else reads it), and the new fakeCmdBindPipeline/
+   fakeCmdDispatch/fakeCmdPipelineBarrier2 entries forward to
+   cmdListBindComputePipeline / cmdListDispatch (compute encoder, setpso
+   carries the threadgroup size) / cmdListEndEncoder (encoder split =
+   barrier). bindResources (already implemented) binds STORAGE_IMAGE +
+   UNIFORM_TEXEL_BUFFER descriptors as textures 0/1 and pushes the extent
+   via setBytes at buffer 30 — verified against vendored
+   d3d9_format_helpers.cpp ConvertGenericFormat.
+3. **"dropping swizzle on depth/MSAA view" downgraded** (d9mt_resources.cpp):
+   DSV swizzles are zeroed by the front-end (BACKEND-SURFACE §3.3) and never
+   reach the drop branch; the 4 hits/session are SAMPLED depth/MSAA views
+   losing only component replication/forcing (Metal forbids swizzled
+   depth/MSAA views — genuinely unimplementable without an extra pass).
+   Now a warn-once with format/packedSwizzle details instead of an err per
+   view.
+4. **dsclear.exe** (test/dsclear.c, reuses shadertri bytecode; wired into
+   scripts/build.sh): per frame on a D24S8 auto-DS — full clear z=1.0, big
+   near red tri (z=0.3), MID-FRAME Clear(D3DCLEAR_ZBUFFER) with a sub-rect
+   back to 1.0 (the exact GTA IV partial depth-aspect-only path), then the
+   same tri far/green (z=0.7, LESSEQUAL). Readback asserts green inside the
+   rect, red outside, clear color in the corner — exact pixel matches.
+   YUV conversion remains runtime-untested (no YUY2 test app yet; the
+   pipelines now compile at device init and the dispatch path is encoder-
+   verified by inspection only).
+
+## GTA IV black-screen fixes round 2 (2026-06-12)
+
+Symptom (screenshot analysis under d3d9fe.dll): scene renders but ~99% dark —
+menu art near-black, font/text invisible, world black except HUD minimap;
+untextured UI quads normal. Full audit of the spec-constant + push-data chain
+(§4.4/§4.5) came back CLEAN (verified by MSL dumps: function-constant ids ==
+SpecId dwords 0..5 + gate 12=true folds out the slot-31 spec_state UBO read;
+render_state offsets fogColor@0/fogScale@12/fogEnd@16/alphaRef@24 and sampler
+heap dwords @64.. all match). The real causes were three texture-path bugs the
+old suite could not see — NO suite test ever pixel-verified a sampled texture
+(texquad renders but never reads back):
+
+1. **ROOT CAUSE — every texture upload silently dropped** (d9mt_context.cpp
+   `copyBufferToImage`): we encoded
+   `WMTBlitCommandCopyFromBufferToTextureWithBlitOption`, but the PREBUILT
+   winemetal bridge does not implement that command (its dylib exports no
+   `copyFromBuffer:...options:` selector; the old driver never used it). The
+   bridge dropped the copy — every Lock/Unlock-uploaded texture stayed
+   zero-filled, so all textured draws sampled (0,0,0,0): black world/menu,
+   alpha-0 → invisible fonts, while untextured quads and RT-sourced content
+   (minimap) rendered fine. Fixed by encoding the plain, proven
+   `WMTBlitCommandCopyFromBufferToTexture` whenever blit options are None
+   (every color format). Packed depth-stencil locks (option != None) cannot be
+   expressed through this bridge: err-once + skip (already on the backlog as
+   "packed D24S8/D16 depth buffer copies").
+2. **Sampler refs keyed off the wrong descriptor field** (d9mt_shader.cpp):
+   dxso + fixed-function sampler descriptors never set `.binding` — their
+   identity lives in `resourceIndex` (== computeResourceSlotId slot used by
+   bindResourceSampler). We read `getBinding()` (always 0), so EVERY sampler
+   lookup read `m_samplers[0]` (never bound → heap index 0): all draws shared
+   one stale sampler object (wrong filter/address modes; heap slot 0 even gets
+   zeroed when its sampler dies). Now `getResourceIndex()`.
+3. **Aliased shadow-texture AB entries never written** (d9mt_shader.cpp):
+   dxso emits TWO variables per texture binding (`tN_2d` + `tN_2d_shadow`,
+   same SPIR-V Binding; SPIRV-Cross gives each its own tier-2 AB id). The
+   slot→abId map used `insert` on a unique map, dropping the `_shadow` id —
+   depth-compare sampling (SamplerDepthMode, GTA shadow maps) read a NULL
+   texture. Reflection now keeps a multimap and writes the view's descriptor
+   word into EVERY aliasing AB id.
+
+Test coverage added (test/ + scripts/build.sh, vs_2_0/ps_2_0 blobs via
+tools/hlsl2dxso.exe so the dxso fog stage is emitted):
+
+- **fogtest.exe**: three readback-verified quads — fog disabled (pure red),
+  vertex fog via oFog=0.25 with table NONE (exact mix(blue,red,0.25)), table
+  LINEAR fog at depth 0.5 with start 0/end 1 (exact 50/50 mix). Proves the
+  FogEnabled/PixelFogMode spec dwords reach the PSO function constants and the
+  fogColor/fogScale/fogEnd push fields are correctly offset and fresh.
+- **multisampler.exe**: ps_2_0 sampling s0..s7 simultaneously; per-slot 64x64
+  textures (green channel encodes the slot id) + per-slot address modes (even
+  CLAMP / odd WRAP at u=-0.25 selecting left/right texel); 8 one-hot-weighted
+  column draws, all readback-verified. Proves texture slot→AB mapping, per-slot
+  sampler heap indices (catches bug 2: pre-fix all slots share one sampler),
+  per-draw PS constant rebinds, and texture upload content (catches bug 1).
+
+Full 11-test FE suite green, zero stub hits, zero err/warn;
+scripts/build.sh + tools/build-host.sh green. Residual risks: the shadow-alias
+fix (bug 3) is verified by reflection/MSL inspection only — no depth-compare
+sampling test app yet (needs a depth-texture render + tex2Dproj readback);
+packed DS Lock uploads are now an explicit err-once skip; unbound-sampler
+slots still fall back to heap index 0 (upstream binds a default sampler —
+SamplerNull spec normally guards this); a D9MT_DUMP_MSL=<dir> env hook now
+dumps runtime-translated MSL for future debugging.
+
+## GTA IV fullscreen Reset fixes (2026-06-12, d9mt_wsi.cpp)
+
+Symptom: windowed renders fine; any in-game fullscreen/resolution change dies
+with "warn: Device reset failed: Device not reset" → DD3D80 fatal
+(D3DERR_NOTAVAILABLE, -2005530518). Driver log: setWindowMode 2992x1934@0,
+then 2056x1285@60, 2056x1286@60, then 640x480@60 — the last two fail.
+
+Root cause (measured with test/modeprobe.c inside the CX bottle — keep that
+probe, it is the ground truth for this section):
+
+1. **CX advertises the Mac scaled-resolution list ×2** through
+   EnumDisplaySettings: 393 modes (960x600 … 3456x2234, incl. the odd-height
+   2056x1285/2992x1934 retina sizes) and NO classic PC modes — no 640x480,
+   no 800x600, no 1280x720. GTA IV's menu/auto-config therefore picked
+   2056x1285 (a REAL advertised mode, not invented by the game).
+2. **ChangeDisplaySettingsExW never actually switches** under CX: listed
+   modes return DISP_CHANGE_SUCCESSFUL but ENUM_CURRENT_SETTINGS stays
+   2992x1934@120; off-list modes fail with DISP_CHANGE_BADMODE (-2).
+3. **The ±1px wobble is CX's physical↔logical (÷2/×2) rounding of
+   odd-height modes**, not our presenter math (windowed client rects round-
+   trip exactly; the proxy never adds 1). After "setting" 2056x1285 the game
+   reads back 2056x1286 (1285/2 = 642.5 → 643 → ×2 = 1286), re-requests that
+   phantom mode → BADMODE → vendored wsi::setWindowMode false →
+   ChangeDisplayMode → D3DERR_NOTAVAILABLE → Reset fails; its 640x480
+   last-ditch fallback isn't in CX's list either → same failure → fatal.
+
+Fix (all in our code; vendored TUs untouched): **D9mtWsiDriver**
+(src/d3d9fe/d9mt_wsi.cpp) subclasses the vendored Win32WsiDriver (all
+methods virtual) and is installed by repointing the MUTABLE bootstrap
+global `wsi::Win32WSI.createDriver` before wsi::init()
+(d9mt::installWsiDriver(), called from the DxvkInstance ctor). Overrides:
+
+1. **getDisplayMode serves a sane even-dimension list**: classic ladder
+   (640x480 … 2560x1600, filtered to ≤ desktop) + the current desktop mode
+   exactly, each @60Hz (+ desktop refresh when ≠60), 32+16 bpp. Even dims
+   are wobble-proof through CX's ÷2/×2 round-trip; the list is rebuilt on
+   each enumeration restart (modeNumber == 0) and always contains
+   GetAdapterDisplayMode's mode. Games can no longer pick phantom sizes.
+2. **setWindowMode succeeds by emulation**: real switching doesn't exist on
+   Mac — fullscreen IS borderless (vendored enterFullscreenMode/
+   updateFullscreenWindow size the window to getDesktopCoordinates; the
+   presenter already scales any backbuffer extent into the layer via the
+   blitter dstRect). The real ChangeDisplaySettings is still attempted
+   first; failure logs "emulating display mode WxH" and returns true.
+3. **getCurrentDisplayMode reports the emulated mode while active** (with
+   @0 refresh requests normalized to the desktop rate — ChangeDisplayMode
+   divides by the denominator), so GetDisplayMode(Ex)/GetAdapterDisplayMode
+   agree with what the game asked. restoreDisplayMode (LeaveFullscreenMode)
+   clears it and returns true regardless of the underlying no-op restore.
+
+Presenter notes: no changes needed — it was already robust across
+fullscreen Reset (proxy + layer drawableSize recreated together under the
+presenter lock on any extent change, same CAMetalLayer reused, stale proxy
+impossible because extent is compared every acquire).
+
+Verification: **resettest.exe** (test/resettest.c, in scripts/build.sh):
+asserts the advertised mode list (640x480@60 + 1280x720@60 + exact desktop
+present, zero odd-dimension modes), then windowed 640x480 → Reset to
+FULLSCREEN 1280x720@60 (off-list for CX ⇒ exercises emulation; verifies
+TestCooperativeLevel == D3D_OK + GetDisplayMode == 1280x720 + 3 drawn
+frames) → Reset to fullscreen desktop res @0Hz (mode change while
+fullscreen; div-by-zero guard) → Reset back to windowed (verifies the
+adapter mode is the real desktop again) — PASS. Full 12-test FE suite
+green, zero stub hits.
+
+Residual risks: pure-emulated modes show a stretched (non-integer-scale)
+image when the aspect differs from the panel — correct borderless behavior,
+no letterboxing in the present blit beyond what the game requests;
+multi-monitor untested (single-monitor bottle); games that read the
+HOST mode list via EnumDisplaySettings directly (not through d3d9) still
+see CX's scaled modes; alt-tab/occlusion during emulated fullscreen
+unexercised; the 16bpp ladder entries advertise modes CX cannot even
+emulate-set for real 16-bit desktops (CX has no 16-bit desktop — harmless).
+
 ## Liveness contracts (deadlock sources — BACKEND-SURFACE §5.1)
 
 1. presenter->signalFrame(frameId) after each present.
@@ -928,6 +1134,42 @@ waitUntilCompleted; see "Stage decisions: device" item 4).
       incl. "(0 passes)" for UP draws); transcript in
       build/fallback-suite-final.log. Working tree left uncommitted on purpose
       (queries + resolve work since 0bac5a6).
+- [x] GTA IV black-screen fixes round 1 (2026-06-12): partial single-aspect
+      depth-stencil clearImageView (scissored fullscreen-tri pass, viewport-
+      znear depth encoding, stencil-ref Replace) + createBuiltInComputePipeline
+      / cmdBindPipeline / cmdDispatch / cmdPipelineBarrier for the
+      D3D9FormatHelper YUV conversion shaders (SPIRV-Cross MSL direct bindings,
+      function-constant spec values, VkPipeline = BuiltInComputePipeline*
+      released via fakeDestroyPipeline) + depth/MSAA swizzle-drop log
+      downgraded to warn-once. New dsclear.exe verifies the partial depth-only
+      clear by exact readback; full 9-test FE suite green (see section above);
+      build-dxvkfe.sh + scripts/build.sh + tools/build-host.sh all pass.
+      YUV conversion dispatch remains runtime-untested (no YUY2 test app).
+- [x] GTA IV black-screen fixes round 2 (2026-06-12): texture uploads were
+      silently dropped (WithBlitOption blit command unimplemented in the
+      prebuilt winemetal bridge → plain CopyFromBufferToTexture for option-less
+      copies), sampler refs keyed off getBinding() instead of
+      getResourceIndex() (all draws shared m_samplers[0]'s heap index), and
+      aliased dxso shadow-texture AB entries dropped by a unique slot→abId map
+      (depth-compare sampling read a null texture). Spec-constant + push-data
+      chain audited clean against MSL dumps. New readback tests fogtest.exe
+      (fog off / vertex fog / table fog exact-pixel) + multisampler.exe (8
+      simultaneous PS sampler slots, per-slot textures AND address modes).
+      Full 11-test FE suite green, zero stub hits; all build scripts green.
+      See "GTA IV black-screen fixes round 2" section above for residuals.
+- [x] GTA IV fullscreen Reset fixes (2026-06-12): D9mtWsiDriver
+      (src/d3d9fe/d9mt_wsi.cpp, installed via the mutable Win32WSI bootstrap
+      pointer) — sane even-dimension EnumAdapterModes ladder + desktop mode,
+      succeed-by-emulation setWindowMode (CX cannot switch modes; fullscreen
+      = borderless window + presenter scaling), emulated current mode
+      reported until restoreDisplayMode. Root cause measured with
+      test/modeprobe.c: CX advertises only Mac scaled modes (no 640x480 /
+      1280x720), never switches, and odd-height modes wobble ±1px through
+      its ÷2/×2 rounding (2056x1285 → readback 2056x1286 → BADMODE →
+      D3DERR_NOTAVAILABLE Reset failure). New resettest.exe PASSes the
+      windowed→fullscreen 1280x720→fullscreen desktop→windowed Reset chain;
+      full 12-test FE suite green, zero stub hits; all build scripts green.
+      See "GTA IV fullscreen Reset fixes" section above for residuals.
 - [ ] Remaining context ops, backlog (DISCARD-rename suballocator, gamma LUT,
       software cursor, per-vis-buffer cap of 8192 occlusion spans per
       submission, partial-region resolves, packed D24S8/D16 depth buffer

@@ -17,6 +17,8 @@
 // All caches are process-global and hold Rc<DxvkShader> refs for the process
 // lifetime (upstream's pipeline manager has the same lifetime policy).
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -122,7 +124,11 @@ namespace dxvk::d9mt {
       result->stage = shader->info().stage;
 
       std::string msl;
-      std::unordered_map<uint32_t, uint32_t> slotToAbId;
+      // slot -> AB ids. MULTImap: dxso emits aliased variables for one
+      // binding (t0_2d + t0_2d_shadow share the SPIR-V Binding); every
+      // variant's AB dword must be written or depth-compare sampling reads
+      // a null texture (GTA IV black-world bug).
+      std::unordered_multimap<uint32_t, uint32_t> slotToAbId;
 
       // -------- SPIR-V -> MSL + reflection
       try {
@@ -154,7 +160,7 @@ namespace dxvk::d9mt {
           if (abId == uint32_t(-1))
             return;
 
-          slotToAbId.insert({ slot, abId });
+          slotToAbId.emplace(slot, abId);
           result->abEntryCount = std::max(result->abEntryCount, abId + 1u);
         };
 
@@ -209,8 +215,12 @@ namespace dxvk::d9mt {
         const DxvkShaderDescriptor& binding = bindings.bindings[i];
 
         if (binding.getDescriptorType() == VK_DESCRIPTOR_TYPE_SAMPLER) {
+          // sampler descriptors carry no Binding decoration (dxso + FF set
+          // only resourceIndex); the bound DxvkSampler lives in
+          // m_samplers[resourceIndex] — using getBinding() here reads
+          // m_samplers[0] for every sampler (GTA IV wrong-sampler bug)
           ShaderSamplerRef ref = { };
-          ref.slot        = uint16_t(binding.getBinding());
+          ref.slot        = uint16_t(binding.getResourceIndex());
           ref.blockOffset = uint16_t(binding.getBlockOffset());
           result->samplers.push_back(ref);
           continue;
@@ -219,17 +229,18 @@ namespace dxvk::d9mt {
         if (binding.getSet() != 0u)
           continue;
 
-        auto entry = slotToAbId.find(binding.getBinding());
-        if (entry == slotToAbId.end())
-          continue; // optimized out of the SPIR-V
+        // write EVERY AB dword that aliases this binding (shadow variants)
+        auto range = slotToAbId.equal_range(binding.getBinding());
 
-        ShaderResourceRef ref = { };
-        ref.slot            = uint16_t(binding.getBinding());
-        ref.abId            = uint16_t(entry->second);
-        ref.type            = binding.getDescriptorType();
-        ref.isUniformBuffer = binding.isUniformBuffer()
-          || binding.getDescriptorType() == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        result->resources.push_back(ref);
+        for (auto entry = range.first; entry != range.second; ++entry) {
+          ShaderResourceRef ref = { };
+          ref.slot            = uint16_t(binding.getBinding());
+          ref.abId            = uint16_t(entry->second);
+          ref.type            = binding.getDescriptorType();
+          ref.isUniformBuffer = binding.isUniformBuffer()
+            || binding.getDescriptorType() == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+          result->resources.push_back(ref);
+        }
       }
 
       uint32_t pushMask = layout.getPushDataMask();
@@ -254,6 +265,14 @@ namespace dxvk::d9mt {
         Logger::err(str::format("d9mt: shader push data exceeds limit: ",
           result->pushDataSize));
         return nullptr;
+      }
+
+      if (const char* dump = std::getenv("D9MT_DUMP_MSL")) {
+        std::string path = std::string(dump) + "\\" + shader->debugName() + ".metal";
+        if (FILE* f = std::fopen(path.c_str(), "w")) {
+          std::fwrite(msl.data(), 1, msl.size(), f);
+          std::fclose(f);
+        }
       }
 
       // -------- MSL -> MTLLibrary (d9mtmetal runtime compile)

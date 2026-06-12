@@ -145,6 +145,12 @@ namespace dxvk::d9mt {
     return reinterpret_cast<VkPhysicalDevice>(&s_dummy);
   }
 
+  // Repoints the vendored wsi::Win32WSI bootstrap factory at our
+  // D9mtWsiDriver (CrossOver fullscreen reality: sane even-dimension mode
+  // list, succeed-by-emulation display-mode sets — see d9mt_wsi.cpp).
+  // Must run before wsi::init(); called from the DxvkInstance ctor.
+  void installWsiDriver();
+
   // -------------------------------------------------------------------------
   // VkFormat -> WMTPixelFormat capability table.
   //
@@ -196,6 +202,27 @@ namespace dxvk::d9mt {
   // an MSAA Depth32Float_Stencil8 source. Used by DxvkContext::resolveImage.
   obj_handle_t getDepthResolvePso(bool withStencil);
 
+  // Partial depth/stencil clear PSO (d9mt_presenter.cpp): fullscreen triangle
+  // with z = 0 and a void fragment function; the clear depth value is encoded
+  // as viewport znear == zfar, the stencil value as the DSSO stencil
+  // reference (op Replace). One PSO per raster sample count. Used by
+  // DxvkContext::clearImageView for scissored single-aspect DS clears.
+  obj_handle_t getDepthStencilClearPso(uint32_t sampleCount);
+
+  // -------------------------------------------------------------------------
+  // built-in compute pipelines (DxvkDevice::createBuiltInComputePipeline,
+  // d9mt_device.cpp): the D3D9FormatHelper YUV/mixed-format upload conversion
+  // shaders. The VkPipeline handle returned to the front-end is a pointer to
+  // this struct; ~D3D9FormatHelper releases it through the fake
+  // vkDestroyPipeline dispatch entry.
+  // -------------------------------------------------------------------------
+
+  struct BuiltInComputePipeline {
+    obj_handle_t pso     = 0;            // MTLComputePipelineState, retained
+    obj_handle_t library = 0;            // MTLLibrary, retained
+    WMTSize      threadgroupSize = { 1u, 1u, 1u }; // SPIR-V LocalSize
+  };
+
   // -------------------------------------------------------------------------
   // completion watcher (d9mt_watcher.cpp) — the GPU-liveness backbone
   // (BACKEND-SURFACE §5.1). winemetal has no generic completion-callback
@@ -236,6 +263,14 @@ namespace dxvk::d9mt {
 
   // Ends whatever encoder is currently open on the list.
   void cmdListEndEncoder(const void* list);
+
+  // Compute bridge for the D3D9FormatHelper path (vendored
+  // DxvkCommandList::cmdBindPipeline / cmdDispatch route through the fake
+  // Vulkan device dispatch in d9mt_device.cpp into these). Both open the
+  // list's compute encoder (ending any other encoder) on demand.
+  void cmdListBindComputePipeline(const void* list, obj_handle_t pso,
+    const WMTSize& threadgroupSize);
+  void cmdListDispatch(const void* list, uint32_t x, uint32_t y, uint32_t z);
 
   // -------------------------------------------------------------------------
   // sampler heap shadow: gpuResourceID of every live MTLSamplerState, indexed

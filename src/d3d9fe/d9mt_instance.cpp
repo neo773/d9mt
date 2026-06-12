@@ -350,6 +350,9 @@ namespace dxvk {
     // Win32 WSI driver (window sizing / monitor enumeration / fullscreen).
     // Upstream initializes it here too; without it every wsi::* call
     // null-derefs the driver pointer (s_driver) on first swapchain creation.
+    // installWsiDriver first: repoints the Win32WSI bootstrap factory at our
+    // D9mtWsiDriver (CrossOver fullscreen mode-set emulation, d9mt_wsi.cpp).
+    d9mt::installWsiDriver();
     wsi::init();
 
     // user config (dxvk.conf / env) takes precedence over app profiles,

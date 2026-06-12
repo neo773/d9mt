@@ -10,6 +10,7 @@
 //
 // See docs/METAL-BACKEND-NOTES.md "Stage decisions: device" for rationale.
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 
@@ -17,6 +18,8 @@
 
 #include "../../vendor/dxvk/src/dxvk/dxvk_device.h"
 #include "../../vendor/dxvk/src/dxvk/dxvk_queue.h"
+
+#include "../../vendor/spirv-cross/spirv_msl.hpp"
 
 namespace dxvk::d9mt {
 
@@ -69,12 +72,49 @@ namespace dxvk::d9mt {
     VKAPI_ATTR void VKAPI_CALL fakeDestroyPipeline(
             VkDevice, VkPipeline pipeline, const VkAllocationCallbacks*) {
       // ~D3D9FormatHelper destroys its built-in compute pipelines through
-      // vkd(); they are VK_NULL_HANDLE until the Draw stage implements
-      // createBuiltInComputePipeline (which must then own real teardown)
-      if (pipeline) {
-        Logger::err("d9mt: vkDestroyPipeline called with non-null pipeline "
-          "— leaking (createBuiltInComputePipeline owns no release path yet)");
+      // vkd(); the handle is a BuiltInComputePipeline* minted by
+      // DxvkDevice::createBuiltInComputePipeline below
+      if (!pipeline)
+        return;
+
+      auto* p = reinterpret_cast<BuiltInComputePipeline*>(uintptr_t(pipeline));
+      if (p->pso)
+        NSObject_release(p->pso);
+      if (p->library)
+        NSObject_release(p->library);
+      delete p;
+    }
+
+    // The vendored DxvkCommandList inline methods route cmdBindPipeline /
+    // cmdDispatch / cmdPipelineBarrier through this dispatch table for the
+    // D3D9FormatHelper conversion path (BACKEND-SURFACE §1.8). The
+    // VkCommandBuffer is the DxvkCommandList pointer, smuggled in by
+    // DxvkCommandList::init (d9mt_context.cpp).
+    VKAPI_ATTR void VKAPI_CALL fakeCmdBindPipeline(
+            VkCommandBuffer commandBuffer,
+            VkPipelineBindPoint pipelineBindPoint,
+            VkPipeline pipeline) {
+      if (pipelineBindPoint != VK_PIPELINE_BIND_POINT_COMPUTE || !pipeline) {
+        Logger::err("d9mt: vkCmdBindPipeline: only built-in compute pipelines supported");
+        return;
       }
+      auto* p = reinterpret_cast<BuiltInComputePipeline*>(uintptr_t(pipeline));
+      cmdListBindComputePipeline(reinterpret_cast<const void*>(commandBuffer),
+        p->pso, p->threadgroupSize);
+    }
+
+    VKAPI_ATTR void VKAPI_CALL fakeCmdDispatch(
+            VkCommandBuffer commandBuffer,
+            uint32_t x, uint32_t y, uint32_t z) {
+      cmdListDispatch(reinterpret_cast<const void*>(commandBuffer), x, y, z);
+    }
+
+    VKAPI_ATTR void VKAPI_CALL fakeCmdPipelineBarrier2(
+            VkCommandBuffer commandBuffer,
+      const VkDependencyInfo*) {
+      // compute-write → consumer barrier: Metal encoder boundaries provide
+      // cross-encoder ordering, so ending the compute encoder suffices
+      cmdListEndEncoder(reinterpret_cast<const void*>(commandBuffer));
     }
 
     // Trampoline for every Vulkan device function we do not service. Calling
@@ -98,6 +138,9 @@ namespace dxvk::d9mt {
       { "vkCreatePipelineLayout",           reinterpret_cast<PFN_vkVoidFunction>(&fakeCreatePipelineLayout) },
       { "vkDestroyPipelineLayout",          reinterpret_cast<PFN_vkVoidFunction>(&fakeDestroyPipelineLayout) },
       { "vkDestroyPipeline",                reinterpret_cast<PFN_vkVoidFunction>(&fakeDestroyPipeline) },
+      { "vkCmdBindPipeline",                reinterpret_cast<PFN_vkVoidFunction>(&fakeCmdBindPipeline) },
+      { "vkCmdDispatch",                    reinterpret_cast<PFN_vkVoidFunction>(&fakeCmdDispatch) },
+      { "vkCmdPipelineBarrier2",            reinterpret_cast<PFN_vkVoidFunction>(&fakeCmdPipelineBarrier2) },
     };
 
   } // anonymous namespace
@@ -350,13 +393,185 @@ namespace dxvk {
   VkPipeline DxvkDevice::createBuiltInComputePipeline(
     const DxvkPipelineLayout*           layout,
     const util::DxvkBuiltInShaderStage& stage) {
-    // SPIR-V -> MSL translation for the D3D9FormatHelper conversion shaders
-    // lands with the Draw stage. The only consumers are the YUV/video upload
-    // paths, whose formats the adapter reports as unsupported, so a null
-    // pipeline here is unreachable in practice — but stay loud.
-    Logger::err("d9mt: createBuiltInComputePipeline: not implemented yet "
-      "(D3D9FormatHelper conversion shaders) — returning null pipeline");
-    return VK_NULL_HANDLE;
+    // SPIR-V -> MSL for the 7 embedded D3D9FormatHelper conversion shaders
+    // (BACKEND-SURFACE §4.8). Unlike the Draw stage (argument buffers), the
+    // built-in pipelines use DIRECT bindings matching the convention in
+    // DxvkCommandList::bindResources (METAL-BACKEND-NOTES context item 12):
+    // descriptor i of image/texel-buffer type -> [[texture(i)]], push
+    // constants -> [[buffer(30)]]. Spec constants (id 0 = YUY2/UYVY select)
+    // become Metal function constants resolved at newFunction time.
+    std::string msl;
+    WMTSize threadgroupSize = { 1u, 1u, 1u };
+
+    struct SpecConstant {
+      uint32_t id;
+      uint32_t value;
+      bool     isBool;
+    };
+    std::vector<SpecConstant> specConstants;
+
+    try {
+      spirv_cross::CompilerMSL compiler(stage.code, stage.size / sizeof(uint32_t));
+
+      spirv_cross::CompilerMSL::Options opts;
+      opts.set_msl_version(3, 0, 0);
+      opts.texture_buffer_native = true; // usamplerBuffer -> texture_buffer
+      compiler.set_msl_options(opts);
+
+      // direct bindings per the bindResources slot convention
+      for (uint32_t binding = 0; binding < 2u; binding++) {
+        spirv_cross::MSLResourceBinding b = { };
+        b.stage = spv::ExecutionModelGLCompute;
+        b.desc_set = 0u;
+        b.binding = binding;
+        b.count = 1u;
+        b.msl_texture = binding;
+        b.msl_buffer  = binding;
+        b.msl_sampler = binding;
+        compiler.add_msl_resource_binding(b);
+      }
+
+      spirv_cross::MSLResourceBinding push = { };
+      push.stage = spv::ExecutionModelGLCompute;
+      push.desc_set = spirv_cross::kPushConstDescSet;
+      push.binding  = spirv_cross::kPushConstBinding;
+      push.count = 1u;
+      push.msl_buffer = 30u;
+      compiler.add_msl_resource_binding(push);
+
+      msl = compiler.compile();
+
+      threadgroupSize.width = std::max(1u,
+        compiler.get_execution_mode_argument(spv::ExecutionModeLocalSize, 0));
+      threadgroupSize.height = std::max(1u,
+        compiler.get_execution_mode_argument(spv::ExecutionModeLocalSize, 1));
+      threadgroupSize.depth = std::max(1u,
+        compiler.get_execution_mode_argument(spv::ExecutionModeLocalSize, 2));
+
+      for (const auto& sc : compiler.get_specialization_constants()) {
+        const auto& cst  = compiler.get_constant(sc.id);
+        const auto& type = compiler.get_type(cst.constant_type);
+
+        SpecConstant info = { };
+        info.id     = sc.constant_id;
+        info.value  = cst.scalar(0, 0);
+        info.isBool = type.basetype == spirv_cross::SPIRType::Boolean;
+
+        // override with the supplied specialization data (VkSpecializationInfo)
+        if (stage.spec) {
+          for (uint32_t i = 0; i < stage.spec->mapEntryCount; i++) {
+            const auto& entry = stage.spec->pMapEntries[i];
+            if (entry.constantID != sc.constant_id)
+              continue;
+            uint32_t value = 0u;
+            std::memcpy(&value, reinterpret_cast<const char*>(stage.spec->pData)
+              + entry.offset, std::min(sizeof(value), entry.size));
+            info.value = value;
+          }
+        }
+
+        specConstants.push_back(info);
+      }
+    } catch (const std::exception& e) {
+      Logger::err(str::format("d9mt: createBuiltInComputePipeline: "
+        "SPIR-V -> MSL translation failed: ", e.what()));
+      return VK_NULL_HANDLE;
+    }
+
+    obj_handle_t device = d9mt::mtlDevice();
+    if (!device)
+      return VK_NULL_HANDLE;
+
+    // MSL -> MTLLibrary (d9mtmetal runtime compile)
+    d9mt_newlibrary_params lp;
+    std::memset(&lp, 0, sizeof(lp));
+    lp.device     = device;
+    lp.source_ptr = uint64_t(uintptr_t(msl.data()));
+    lp.source_len = msl.size();
+    lp.fast_math  = 1;
+
+    int status = D9MT_UnixCall(D9MT_FUNC_NEW_LIBRARY_FROM_SOURCE, &lp);
+    if (status != 0 || !lp.ret_library) {
+      Logger::err(str::format("d9mt: createBuiltInComputePipeline: "
+        "MSL compile failed, status ", status));
+      if (lp.ret_error)
+        d9mt::logNSError("d9mt: built-in compute MSL compile", lp.ret_error);
+      return VK_NULL_HANDLE;
+    }
+    if (lp.ret_error)
+      NSObject_release(lp.ret_error); // warnings only
+
+    obj_handle_t library = lp.ret_library;
+
+    // MTLLibrary -> MTLFunction (supplying ALL declared function constants)
+    obj_handle_t pool = NSAutoreleasePool_alloc_init();
+    obj_handle_t function = 0;
+
+    if (specConstants.empty()) {
+      function = MTLLibrary_newFunction(library, "main0");
+      if (!function)
+        Logger::err("d9mt: createBuiltInComputePipeline: main0 not found");
+    } else {
+      std::vector<uint32_t> values(specConstants.size());
+      std::vector<WMTFunctionConstant> consts(specConstants.size());
+
+      for (size_t i = 0; i < specConstants.size(); i++) {
+        values[i] = specConstants[i].value;
+        std::memset(&consts[i], 0, sizeof(consts[i]));
+        consts[i].data.set(&values[i]);
+        consts[i].type = specConstants[i].isBool
+          ? WMTDataTypeBool
+          : WMTDataTypeUInt;
+        consts[i].index = uint16_t(specConstants[i].id);
+      }
+
+      obj_handle_t err = 0;
+      function = MTLLibrary_newFunctionWithConstants(library, "main0",
+        consts.data(), uint32_t(consts.size()), &err);
+
+      if (!function)
+        d9mt::logNSError("d9mt: built-in compute newFunctionWithConstants", err);
+      else if (err)
+        NSObject_release(err);
+    }
+
+    if (!function) {
+      NSObject_release(pool);
+      NSObject_release(library);
+      return VK_NULL_HANDLE;
+    }
+
+    // MTLFunction -> MTLComputePipelineState
+    WMTComputePipelineInfo info = { };
+    info.compute_function = function;
+
+    obj_handle_t err = 0;
+    obj_handle_t pso = MTLDevice_newComputePipelineState(device, &info, &err);
+
+    NSObject_release(function);
+    NSObject_release(pool);
+
+    if (!pso) {
+      Logger::err("d9mt: createBuiltInComputePipeline: newComputePipelineState failed");
+      if (err)
+        d9mt::logNSError("d9mt: built-in compute PSO", err);
+      NSObject_release(library);
+      return VK_NULL_HANDLE;
+    }
+    if (err)
+      NSObject_release(err);
+
+    auto* result = new d9mt::BuiltInComputePipeline();
+    result->pso = pso;
+    result->library = library;
+    result->threadgroupSize = threadgroupSize;
+
+    d9mt::logf("d9mt: built-in compute pipeline created (%zu bytes MSL, "
+      "tg %ux%ux%u, spec=%zu)", msl.size(),
+      uint32_t(threadgroupSize.width), uint32_t(threadgroupSize.height),
+      uint32_t(threadgroupSize.depth), specConstants.size());
+
+    return VkPipeline(uintptr_t(result));
   }
 
 
