@@ -1,0 +1,80 @@
+test/multisampler_ps.hlsl
+  s_ef7e2ce3136a21::t_0e322e86285baf 1-20
+test/fogtest.c
+  s_ef7e2ce3136a21::t_bf7d6f12d196e7 1-225
+src/d3d9fe/d9mt_wsi.cpp
+  s_ef7e2ce3136a21::t_501bf42612d587 1-227
+test/dsclear.c
+  s_ef7e2ce3136a21::t_bfe62cc4a9d829 1-229
+src/d3d9fe/d9mt_backend.h
+  s_ef7e2ce3136a21::t_5a52cbba335916 267-274
+  s_ef7e2ce3136a21::t_4d483e4f6f2232 205-225
+  s_ef7e2ce3136a21::t_33be392549e704 148-153
+src/d3d9fe/d9mt_context.cpp
+  s_ef7e2ce3136a21::t_7a55a57b676137 2255
+  s_ef7e2ce3136a21::t_9bf9189ebe6e10 2418,2425
+  s_ef7e2ce3136a21::t_356508e122905e 463-488
+  s_ef7e2ce3136a21::t_1d31cead6f28ce 2373-2380,2384-2388,2401
+  s_ef7e2ce3136a21::t_53f3057508e093 2224-2254,2256-2337
+  s_ef7e2ce3136a21::t_de90a853c5943b 957-993
+  s_ef7e2ce3136a21::t_35f38f7bb86d4c 1185-1192
+  s_ef7e2ce3136a21::t_bed265d5efc35a 2596-2611,2613-2614,2623
+src/d3d9fe/d9mt_shader.cpp
+  s_ef7e2ce3136a21::t_cd2857a200ea50 218-221,223,232-243
+  s_ef7e2ce3136a21::t_28ac93a3cb6d82 270-277
+  s_ef7e2ce3136a21::t_29ef6e219392a4 20-21
+  s_ef7e2ce3136a21::t_8e7efc9d994d25 127-131
+  s_ef7e2ce3136a21::t_77050a51a477d9 163
+src/d3d9fe/d9mt_presenter.cpp
+  s_ef7e2ce3136a21::t_5281b8e1a17b03 365-474
+test/multisampler.c
+  s_ef7e2ce3136a21::t_825d0c5ae38297 1-107,109-110,112-115,121-230
+  s_ef7e2ce3136a21::t_dda1820ae0f497 108,111,116-120
+test/fogtest_ps.hlsl
+  s_ef7e2ce3136a21::t_7dd5cae92d679f 1-5
+src/d3d9fe/d9mt_instance.cpp
+  s_ef7e2ce3136a21::t_0880a9c1d14313 353-355
+src/d3d9fe/d9mt_resources.cpp
+  s_ef7e2ce3136a21::t_7dfd1f73a7f16e 376,378-392
+  s_ef7e2ce3136a21::t_91b407b1e0d511 22
+docs/METAL-BACKEND-NOTES.md
+  s_ef7e2ce3136a21::t_e8012f317af72c 1148-1159
+  s_ef7e2ce3136a21::t_d8d636e409f56c 869-936
+  s_ef7e2ce3136a21::t_9b5da1ad12e464 1137-1147
+  s_ef7e2ce3136a21::t_1f03b57c69b07e 937-1000
+  s_ef7e2ce3136a21::t_3b1f67a9245fe5 1001-1074
+  s_ef7e2ce3136a21::t_4e905a7587a7d4 1160-1172
+src/d3d9fe/d9mt_device.cpp
+  s_ef7e2ce3136a21::t_c08d2b0c23659c 75-99,101-117
+  s_ef7e2ce3136a21::t_0587826dec661b 141-143
+  s_ef7e2ce3136a21::t_42f8741f18b6fc 22-23
+  s_ef7e2ce3136a21::t_406a1f609d1854 396-574
+  s_ef7e2ce3136a21::t_07a0109119791e 13
+test/resettest.c
+  s_ef7e2ce3136a21::t_7b541d558db06d 245,247-250
+  s_ef7e2ce3136a21::t_0d0f1a8a4eb348 1-244,246,251-254
+scripts/build.sh
+  s_ef7e2ce3136a21::t_f1c6be4ebc7593 171-176
+  s_ef7e2ce3136a21::t_9aea3b4ed14316 128-131
+  s_ef7e2ce3136a21::t_835b3537f13df0 145-156
+test/multisampler_vs.hlsl
+  s_ef7e2ce3136a21::t_930b46538ec199 1-17
+test/fogtest_vs.hlsl
+  s_ef7e2ce3136a21::t_14dd6b4ab9e6c8 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "ddf8cfd5b51a2f77ad9b0459bf8d7e60fc5bcf62",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-fable-5"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
