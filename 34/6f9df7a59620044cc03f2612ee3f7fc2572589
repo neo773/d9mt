@@ -1,0 +1,35 @@
+src/d9mtmetal/d9mtmetal.h
+  s_ef7e2ce3136a21::t_07a8290766775f 22-26,30-62
+tools/build-d9mtmetal.sh
+  s_ef7e2ce3136a21::t_07a8290766775f 19
+src/d9mtmetal/unix.m
+  s_ef7e2ce3136a21::t_9e075ee2143256 622-624
+  s_ef7e2ce3136a21::t_07a8290766775f 10-21,24-25,150-557,567,571,582,605,608,610-611,615-616,619-621,631,639
+  s_ef7e2ce3136a21::t_848eb758d169ab 558-566,568-570,572-581,583-604,606-607,609,612-614,617-618
+docs/SHADER-DISK-CACHE-ARCH.md
+  s_ef7e2ce3136a21::t_d17d1f9a053cdb 1-469
+docs/SHADER-CACHE-ARCHITECTURE.md
+  s_ef7e2ce3136a21::t_388bd89b1e8001 1-313
+src/d3d9fe/d9mt_shader.cpp
+  s_ef7e2ce3136a21::t_5b6fe9c39957c5 57-62,66-81,84
+  s_ef7e2ce3136a21::t_6b6c281da69da2 357-358
+  s_ef7e2ce3136a21::t_a2fe789f0e26e4 38
+  s_ef7e2ce3136a21::t_07a8290766775f 34,39-56,63-65,82-83,85-90,94-95,97-101,350-356,359-377,379-407,410-413
+  s_ef7e2ce3136a21::t_25a68d239217a5 91-93,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "346f9df7a59620044cc03f2612ee3f7fc2572589",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
