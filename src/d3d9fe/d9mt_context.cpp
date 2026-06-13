@@ -976,10 +976,18 @@ namespace dxvk::d9mt {
         uint32_t hw = dxvk::thread::hardware_concurrency();
         uint32_t n  = hw > 3u ? std::min(4u, hw - 2u) : 1u;
 
-        for (uint32_t i = 0; i < n; i++)
+        for (uint32_t i = 0; i < n; i++) {
           m_threads.emplace_back([this] { run(); });
+          // Lowest priority: a compile burst (entering a new area) must not
+          // preempt the CS/draw thread off its core — that starvation is what
+          // turns a background compile into a visible frame stutter. The
+          // unixcall runs the native Metal compile on this same OS thread, so
+          // de-prioritizing here de-prioritizes the heavy work too. Compiles
+          // just take the spare cycles; geometry pops in a touch later.
+          m_threads.back().set_priority(dxvk::ThreadPriority::Lowest);
+        }
 
-        d9mt::logf("d9mt: async PSO workers started (%u threads)", n);
+        d9mt::logf("d9mt: async PSO workers started (%u threads, low priority)", n);
       }
 
       void run() {
