@@ -18,14 +18,20 @@
 //  - No Vulkan barriers anywhere: ordering comes from Metal encoder
 //    boundaries (single queue, automatic hazard tracking).
 
+#include <atomic>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <windows.h>
 
 #include "d9mt_backend.h"
+#include "d9mt_trace.h"
 #include "d9mt_draw.h"
+
+#include "../../vendor/dxvk/src/util/thread.h"
 
 #include "../../vendor/dxvk/src/dxvk/dxvk_cmdlist.h"
 #include "../../vendor/dxvk/src/dxvk/dxvk_context.h"
@@ -111,7 +117,11 @@ namespace dxvk::d9mt {
     // render pass starts on this list
     obj_handle_t lastRenderPso  = 0;
     obj_handle_t lastRenderDsso = 0;
-    std::vector<obj_handle_t> renderResident;
+    // resources already made resident on the current render encoder. Hash set,
+    // not a vector: markResident is called for every bound resource of every
+    // draw, so an O(n) membership scan was O(n^2) over a pass (hundreds of
+    // resident resources) — a measurable chunk of draw-call CPU.
+    std::unordered_set<obj_handle_t> renderResident;
 
     // visibility-result state (occlusion queries): one pooled shared-storage
     // MTLBuffer per submission that counts samples; slots are bump-allocated
@@ -125,7 +135,24 @@ namespace dxvk::d9mt {
 
     // timestamp queries resolved from the command buffer's GPU end time
     std::vector<Rc<DxvkGpuQuery>> tsQueries;
+
+    // render-command batch arena (Draw stage). Render commands are copied here
+    // and chained via wmtcmd_base::next, then handed to the bridge in ONE
+    // encodeCommands call instead of one Rosetta crossing per command — the
+    // dominant CPU cost in draw-call-heavy scenes. Flushed on overflow and in
+    // endEncoder (the single choke point for every encoder transition). The
+    // buffer is fixed-capacity so appended command addresses stay stable for
+    // the chain's lifetime (no reallocation between flushes).
+    std::vector<uint8_t> cmdArena;
+    size_t               cmdArenaUsed = 0;
+    wmtcmd_base*         cmdHead = nullptr;
+    wmtcmd_base*         cmdTail = nullptr;
   };
+
+  // Render-command arena capacity. Max single render command is well under
+  // 256 bytes; 256 KiB batches ~100+ draws between flushes, so a busy pass
+  // crosses Rosetta a few dozen times instead of tens of thousands.
+  constexpr size_t CmdArenaCap = 256u * 1024u;
 
   // 64 KiB of visibility-result slots per submission (one slot per active-
   // occlusion-query encoder span, not per draw — generous for real apps).
@@ -224,8 +251,32 @@ namespace dxvk::d9mt {
     return *slot;
   }
 
+  // Render-command batching toggle (D9MT_BATCH=0 reverts to one crossing per
+  // command). Default on.
+  static bool batchRenderCmdsEnabled() {
+    static const bool e = [] {
+      const char* v = std::getenv("D9MT_BATCH");
+      return !(v && v[0] == '0' && v[1] == '\0');
+    }();
+    return e;
+  }
+
+  // Hands the accumulated render-command chain to the bridge in a single
+  // encodeCommands crossing, then resets the arena. No-op if empty or if the
+  // encoder is gone. Must run before the render encoder ends or switches.
+  static void flushRenderCmds(CmdListState& state) {
+    if (!state.cmdHead)
+      return;
+    if (state.kind == EncoderKind::Render && state.encoder)
+      MTLRenderCommandEncoder_encodeCommands(state.encoder, state.cmdHead);
+    state.cmdHead = nullptr;
+    state.cmdTail = nullptr;
+    state.cmdArenaUsed = 0;
+  }
+
   static void endEncoder(CmdListState& state) {
     if (state.encoder) {
+      flushRenderCmds(state); // drain pending render commands first
       MTLCommandEncoder_endEncoding(state.encoder);
       NSObject_release(state.encoder);
       state.encoder = 0;
@@ -491,12 +542,46 @@ namespace dxvk::d9mt {
   // METAL-BACKEND-NOTES.md "Stage decisions: draw").
   // ==========================================================================
 
-  // Encodes one render command (next == 0) on the list's open render encoder.
-  static void encodeRenderCmd(CmdListState& state, const void* cmd) {
-    if (state.kind == EncoderKind::Render && state.encoder) {
+  // Encodes one render command on the list's open render encoder. With
+  // batching on (default), the command is copied into the per-list arena and
+  // chained via wmtcmd_base::next; the whole chain crosses Rosetta once at the
+  // next flush (overflow or endEncoder) instead of one crossing here. T is the
+  // concrete wmtcmd_render_* type, so sizeof(T) gives the exact copy size and
+  // every such struct shares the wmtcmd_base header layout (type/reserved/next
+  // at the same offsets), making the reinterpret to set ::next valid.
+  template<typename T>
+  static void encodeRenderCmd(CmdListState& state, const T* cmd) {
+    if (!(state.kind == EncoderKind::Render && state.encoder))
+      return;
+
+    if (!batchRenderCmdsEnabled()) {
       MTLRenderCommandEncoder_encodeCommands(state.encoder,
         reinterpret_cast<const wmtcmd_base*>(cmd));
+      return;
     }
+
+    constexpr size_t sz   = sizeof(T);
+    constexpr size_t need = (sz + 7u) & ~size_t(7u); // 8-byte align entries
+
+    if (state.cmdArena.size() < CmdArenaCap)
+      state.cmdArena.resize(CmdArenaCap); // one-time, then stable
+
+    if (state.cmdArenaUsed + need > CmdArenaCap)
+      flushRenderCmds(state);
+
+    uint8_t* dst = state.cmdArena.data() + state.cmdArenaUsed;
+    std::memcpy(dst, cmd, sz);
+    state.cmdArenaUsed += need;
+
+    auto* base = reinterpret_cast<wmtcmd_base*>(dst);
+    base->next.set(nullptr);
+
+    if (!state.cmdHead)
+      state.cmdHead = base;
+    else
+      state.cmdTail->next.set(base);
+
+    state.cmdTail = base;
   }
 
   // useResource for indirectly referenced resources (argument-buffer words);
@@ -505,10 +590,8 @@ namespace dxvk::d9mt {
     if (!resource)
       return;
 
-    for (obj_handle_t r : state.renderResident) {
-      if (r == resource)
-        return;
-    }
+    if (!state.renderResident.insert(resource).second)
+      return; // already resident on this encoder
 
     wmtcmd_render_useresource cmd = { };
     cmd.type = WMTRenderCommandUseResource;
@@ -516,8 +599,6 @@ namespace dxvk::d9mt {
     cmd.usage = WMTResourceUsageRead;
     cmd.stages = WMTRenderStages(WMTRenderStageVertex | WMTRenderStageFragment);
     encodeRenderCmd(state, &cmd);
-
-    state.renderResident.push_back(resource);
   }
 
 
@@ -615,7 +696,11 @@ namespace dxvk::d9mt {
   // --------------------------------------------------------------------------
 
   struct PsoEntry {
-    obj_handle_t          pso = 0;
+    // pso is the readiness signal. 0 = not ready (async compile pending) OR
+    // permanently failed; non-zero = ready to bind. Written LAST by the
+    // compile (worker or sync) with release semantics; the CS thread loads it
+    // with acquire at the draw site, so vs/fs below are visible once non-zero.
+    std::atomic<obj_handle_t> pso { 0 };
     const CompiledShader* vs  = nullptr;
     const CompiledShader* fs  = nullptr;
     Rc<DxvkShader>        vsRef;
@@ -648,16 +733,18 @@ namespace dxvk::d9mt {
     std::unordered_map<PsoKey, std::unique_ptr<PsoEntry>, PsoKeyHash> s_psoCache;
   }
 
-  // Builds the Metal render PSO for a key (caller holds no locks). Returns
-  // an entry with pso == 0 on failure (failures are cached: the same broken
-  // state would just fail again every draw).
-  static std::unique_ptr<PsoEntry> createRenderPso(
-    const PsoKey&         key,
-    const Rc<DxvkShader>& vs,
-    const Rc<DxvkShader>& fs) {
-    auto entry = std::make_unique<PsoEntry>();
-    entry->vsRef = vs;
-    entry->fsRef = fs;
+  // Builds the Metal render PSO into a preallocated entry whose vsRef/fsRef
+  // are already set (caller holds no locks; safe to run on a worker thread —
+  // touches only the passed entry, the mutex-guarded shader caches, and
+  // winemetal unixcalls, never s_psoCache). Leaves entry->pso == 0 on failure
+  // (failures are cached: the same broken state would just fail every draw).
+  // entry->pso is the LAST thing written, with release ordering, so once the
+  // CS thread observes it non-zero every other field is visible.
+  static void compilePso(
+          PsoEntry*      entry,
+    const PsoKey&        key) {
+    const Rc<DxvkShader>& vs = entry->vsRef;
+    const Rc<DxvkShader>& fs = entry->fsRef;
 
     // module fixups: undefined-input elimination is LOAD-BEARING on Metal
     // (an FS stage_in input with no matching VS output fails PSO creation),
@@ -677,13 +764,13 @@ namespace dxvk::d9mt {
     entry->fs = getCompiledShader(fs, fsInfo);
 
     if (!entry->vs || !entry->fs)
-      return entry;
+      return;
 
     obj_handle_t vsFn = getShaderFunction(entry->vs, key.state.sc.specConstants);
     obj_handle_t fsFn = getShaderFunction(entry->fs, key.state.sc.specConstants);
 
     if (!vsFn || !fsFn)
-      return entry;
+      return;
 
     d9mt_pso_info info;
     std::memset(&info, 0, sizeof(info));
@@ -699,7 +786,7 @@ namespace dxvk::d9mt {
       WMTPixelFormat wmt = wmtFormatFor(format);
       if (wmt == WMTPixelFormatInvalid) {
         Logger::err(str::format("d9mt: PSO: unsupported color format ", uint32_t(format)));
-        return entry;
+        return;
       }
 
       const auto& blend = key.state.omBlend[i];
@@ -742,7 +829,7 @@ namespace dxvk::d9mt {
     if (attrCount > 18u || bindCount > 16u) {
       Logger::err(str::format("d9mt: PSO: vertex layout too large (",
         attrCount, " attributes, ", bindCount, " bindings)"));
-      return entry;
+      return;
     }
 
     for (uint32_t i = 0; i < attrCount; i++) {
@@ -752,7 +839,7 @@ namespace dxvk::d9mt {
       if (!format) {
         Logger::err(str::format("d9mt: PSO: unsupported vertex format ",
           uint32_t(attr.format())));
-        return entry;
+        return;
       }
 
       info.attributes[i].format       = format;
@@ -812,29 +899,159 @@ namespace dxvk::d9mt {
       Logger::err(str::format("d9mt: PSO creation failed, status ", status));
       if (params.ret_error)
         logNSError("d9mt: newRenderPipelineState", params.ret_error);
-      return entry;
+      return;
     }
     if (params.ret_error)
       NSObject_release(params.ret_error);
 
-    entry->pso = params.ret_pso;
-    return entry;
+    // release store: publishes vs/fs and the whole entry to the CS thread
+    entry->pso.store(params.ret_pso, std::memory_order_release);
+  }
+
+  // --------------------------------------------------------------------------
+  // Asynchronous pipeline compilation (mirrors DXVK's DxvkPipelineWorkers).
+  //
+  // D3D9 titles materialize new shader+pipeline-state combinations continuously
+  // as they stream content; compiling those synchronously on the CS/draw thread
+  // stalls the frame for as long as the Metal pipeline compile takes (tens to
+  // hundreds of ms for a single state, far more for a burst). DXVK's base/fast
+  // dual-pipeline trick doesn't map to Metal — there is no cheap base pipeline,
+  // every PSO is a full monolithic compile — so we mirror the dxvk-async model
+  // instead: hand the compile to a background worker pool and SKIP the draw
+  // until the pipeline is hot. The draw site already returns false on pso == 0,
+  // so a not-ready pipeline simply defers the affected geometry by a frame or
+  // two while the frame thread keeps running. Toggle with D9MT_ASYNC=0.
+  // --------------------------------------------------------------------------
+
+  namespace {
+
+    bool asyncPsoEnabled() {
+      static const bool e = [] {
+        const char* v = std::getenv("D9MT_ASYNC");
+        return !(v && v[0] == '0' && v[1] == '\0'); // default on
+      }();
+      return e;
+    }
+
+    class PsoWorkers {
+
+    public:
+
+      // Enqueue a placeholder entry (vsRef/fsRef preset, pso == 0) for
+      // background compilation. The entry pointer is stable for the process
+      // lifetime (heap node owned by s_psoCache, never erased).
+      void enqueue(const PsoKey& key, PsoEntry* entry) {
+        {
+          std::unique_lock<dxvk::mutex> lk(m_mutex);
+          ensureStartedLocked();
+          m_queue.push_back(Job{ key, entry });
+        }
+        m_cond.notify_one();
+      }
+
+      ~PsoWorkers() {
+        {
+          std::unique_lock<dxvk::mutex> lk(m_mutex);
+          m_stop = true;
+        }
+        m_cond.notify_all();
+        for (auto& t : m_threads) {
+          if (t.joinable())
+            t.join();
+        }
+      }
+
+    private:
+
+      struct Job {
+        PsoKey    key;
+        PsoEntry* entry;
+      };
+
+      void ensureStartedLocked() {
+        if (m_started)
+          return;
+        m_started = true;
+
+        uint32_t hw = dxvk::thread::hardware_concurrency();
+        uint32_t n  = hw > 3u ? std::min(4u, hw - 2u) : 1u;
+
+        for (uint32_t i = 0; i < n; i++)
+          m_threads.emplace_back([this] { run(); });
+
+        d9mt::logf("d9mt: async PSO workers started (%u threads)", n);
+      }
+
+      void run() {
+        for (;;) {
+          Job job;
+          {
+            std::unique_lock<dxvk::mutex> lk(m_mutex);
+            m_cond.wait(lk, [this] { return m_stop || !m_queue.empty(); });
+            if (m_queue.empty()) {
+              if (m_stop)
+                return;
+              continue;
+            }
+            job = m_queue.front();
+            m_queue.pop_front();
+          }
+
+          // Heavy compile off the frame thread. compilePso touches only the
+          // entry + the mutex-guarded shader caches + unixcalls, never the
+          // PSO map, so no s_psoMutex is needed here.
+          compilePso(job.entry, job.key);
+        }
+      }
+
+      dxvk::mutex                m_mutex;
+      dxvk::condition_variable   m_cond;
+      std::deque<Job>            m_queue;
+      std::vector<dxvk::thread>  m_threads;
+      bool                       m_started = false;
+      bool                       m_stop    = false;
+
+    };
+
+    // Declared AFTER s_psoCache so it destructs (and joins workers) FIRST,
+    // before the cache they reference is torn down.
+    PsoWorkers s_psoWorkers;
+
   }
 
   static const PsoEntry* getRenderPso(
     const PsoKey&         key,
     const Rc<DxvkShader>& vs,
     const Rc<DxvkShader>& fs) {
+    // The PSO map is mutated ONLY here, on the single CS thread, under the
+    // lock. Workers only write entry->pso (atomic) on their own entry; they
+    // never touch the map, so cache lookups/inserts here are race-free.
     std::lock_guard<std::mutex> lock(s_psoMutex);
 
-    auto entry = s_psoCache.find(key);
-    if (entry != s_psoCache.end())
-      return entry->second.get();
+    {
+      D9MT_ZONE(d9mt::ZonePsoLookup);
+      auto it = s_psoCache.find(key);
+      if (it != s_psoCache.end())
+        return it->second.get(); // ready, compiling, or permanently failed
+    }
 
-    // compile under the lock: serializes shader compiles, acceptable for
-    // bring-up (no worker threads on this backend anyway)
-    return s_psoCache.emplace(key, createRenderPso(key, vs, fs))
-      .first->second.get();
+    // Miss: insert a placeholder holding the shader refs, then either kick a
+    // background compile (async) or compile inline (D9MT_ASYNC=0 fallback).
+    auto entry = std::make_unique<PsoEntry>();
+    entry->vsRef = vs;
+    entry->fsRef = fs;
+    PsoEntry* ptr = entry.get();
+    s_psoCache.emplace(key, std::move(entry));
+
+    if (asyncPsoEnabled()) {
+      // pso stays 0 until the worker finishes; the draw site skips until then.
+      s_psoWorkers.enqueue(key, ptr);
+    } else {
+      D9MT_ZONE(d9mt::ZonePsoCreate);
+      compilePso(ptr, key);
+    }
+
+    return ptr;
   }
 
 
@@ -1803,6 +2020,7 @@ namespace dxvk {
   void DxvkContext::flushCommandList(
     const VkDebugUtilsLabelEXT*       reason,
           DxvkSubmitStatus*           status) {
+    D9MT_ZONE(d9mt::ZoneFlush);
     m_device->submitCommandList(this->endRecording(reason),
       m_latencyTracker, m_latencyFrameId, status);
 
@@ -3917,6 +4135,7 @@ namespace dxvk {
   // ----------------------------------------------------------------------
 
   void DxvkContext::startRenderPass() {
+    D9MT_ZONE(d9mt::ZoneStartRenderPass);
     auto& dstate = d9mt::ctxDrawStateImpl(this);
     const auto& rt = m_state.om.renderTargets;
 
@@ -4350,6 +4569,7 @@ namespace dxvk {
   // ----------------------------------------------------------------------
 
   bool DxvkContext::updateGraphicsShaderResources() {
+    D9MT_ZONE(d9mt::ZoneBindRes);
     auto& dstate = d9mt::ctxDrawStateImpl(this);
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
 
@@ -4362,6 +4582,18 @@ namespace dxvk {
         m_device, VkDeviceSize(4u) << 20u);
     }
 
+    // Split the rebuild by what actually changed. The argument buffer (textures
+    // + uniform-buffer addresses) and the static sampler-heap binding only need
+    // rebuilding when descriptors are dirty; the push block (shader constants)
+    // when push data is dirty. The common per-object draw only changes constants
+    // (new transform), so this skips the expensive AB assembly + residency +
+    // resource-tracking loop on those draws. Encoder bindings persist within a
+    // pass, and every pass restart re-dirties all of this (startRenderPass), so
+    // skipping an unchanged rebind is safe. The push block embeds sampler-heap
+    // indices, so it also rebuilds when descriptors change.
+    const bool resDirty  = m_descriptorState.hasDirtyResources(VK_SHADER_STAGE_ALL_GRAPHICS);
+    const bool pushDirty = m_flags.test(DxvkContextFlag::DirtyPushData);
+
     for (uint32_t stage = 0; stage < 2u; stage++) {
       const d9mt::CompiledShader* shader = stage ? pso->fs : pso->vs;
       WMTRenderCommandType setBufferType = stage
@@ -4369,7 +4601,7 @@ namespace dxvk {
         : WMTRenderCommandSetVertexBuffer;
 
       // ---- set-0 argument buffer
-      if (shader->abEntryCount) {
+      if (resDirty && shader->abEntryCount) {
         DxvkBufferSlice slice = dstate.ring->alloc(
           VkDeviceSize(shader->abEntryCount) * 8u);
 
@@ -4448,7 +4680,7 @@ namespace dxvk {
       }
 
       // ---- push data block (+ sampler heap indices at their blockOffsets)
-      if (shader->pushBufferIndex >= 0 && shader->pushDataSize) {
+      if ((pushDirty || resDirty) && shader->pushBufferIndex >= 0 && shader->pushDataSize) {
         DxvkBufferSlice slice = dstate.ring->alloc(shader->pushDataSize);
 
         uint8_t* data = reinterpret_cast<uint8_t*>(slice.mapPtr(0));
@@ -4493,7 +4725,7 @@ namespace dxvk {
       }
 
       // ---- set-15 sampler heap
-      if (shader->samplerHeapIndex >= 0) {
+      if (resDirty && shader->samplerHeapIndex >= 0) {
         obj_handle_t heap = d9mt::samplerHeapBuffer();
 
         if (heap) {
@@ -4613,6 +4845,7 @@ namespace dxvk {
   void DxvkContext::draw(
           uint32_t          count,
     const VkDrawIndirectCommand* draws) {
+    D9MT_ZONE(d9mt::ZoneDraw);
     if (!this->commitGraphicsState<false, false>())
       return;
 
@@ -4690,6 +4923,7 @@ namespace dxvk {
   void DxvkContext::drawIndexed(
           uint32_t          count,
     const VkDrawIndexedIndirectCommand* draws) {
+    D9MT_ZONE(d9mt::ZoneDrawIndexed);
     if (!this->commitGraphicsState<true, false>())
       return;
 

@@ -15,6 +15,7 @@
 #include <cstring>
 
 #include "d9mt_backend.h"
+#include "d9mt_trace.h"
 
 #include "../../vendor/dxvk/src/dxvk/dxvk_device.h"
 #include "../../vendor/dxvk/src/dxvk/dxvk_queue.h"
@@ -605,7 +606,14 @@ namespace dxvk {
     // callback ordered behind all in-flight work) — BACKEND-SURFACE §5.1,
     // §7 risk 6. Do NOT signal here: that would release SyncFrameLatency
     // before the GPU finished the frame.
-    VkResult vr = presenter->presentImage(frameId, tracker);
+    VkResult vr;
+    {
+      D9MT_ZONE(d9mt::ZonePresent);
+      vr = presenter->presentImage(frameId, tracker);
+    }
+
+    // frame boundary: stamp wall time + dump the per-zone trace line
+    d9mt::traceFrameEnd();
 
     if (status)
       status->result.store(vr);

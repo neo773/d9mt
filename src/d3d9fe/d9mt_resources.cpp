@@ -19,11 +19,16 @@
 //
 // See docs/METAL-BACKEND-NOTES.md "Stage decisions: resources".
 
+#include <array>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include "d9mt_backend.h"
+#include "d9mt_trace.h"
 
 #include "../../vendor/dxvk/src/dxvk/dxvk_buffer.h"
 #include "../../vendor/dxvk/src/dxvk/dxvk_device.h"
@@ -495,6 +500,158 @@ namespace dxvk {
 
     constexpr VkDeviceSize D9MTBufferAlignment = 1u << 16; // VirtualAlloc granularity
 
+    // ------------------------------------------------------------------
+    // Suballocation arena for small, frequently-renamed shared buffers.
+    //
+    // Bring-up minted a fresh VirtualAlloc + MTLDevice_newBuffer (under a
+    // global mutex, crossing Rosetta x86->arm64) for EVERY buffer, including
+    // each D3DLOCK_DISCARD rename of dynamic vertex/index/constant buffers.
+    // Dynamic-heavy D3D9 content renames those many times per frame, so that
+    // churn was the dominant CPU cost and a frame-pacing spike source (global
+    // allocator contention + Metal alloc-latency variance + 64 KiB-min VM
+    // churn).
+    //
+    // The arena carves small slices out of a few large persistent MTLBuffers
+    // ("chunks") and recycles them through segregated free lists. Chunks are
+    // leaked for the session lifetime (like the PSO cache). Correctness rests
+    // on: (1) slices are shared-storage, byte-addressable, identical in kind
+    // to dedicated d9mt buffers; (2) the front-end honors m_bufferOffset
+    // end-to-end (getBufferInfo -> getSliceInfo -> every encode), so a
+    // non-zero slice offset binds correctly; (3) freeAllocation only runs
+    // after the command buffer retires (resource tracking), so a recycled
+    // slice is never reused while the GPU may still read it.
+    //
+    // Slices carry neither OwnsBuffer nor OwnsMemory, so ~DxvkResourceAllocation
+    // never releases the chunk handle or VirtualFrees the chunk memory. The
+    // signature (m_buffer != 0 && !OwnsBuffer) uniquely identifies a slice on
+    // the free path. Toggle with D9MT_SUBALLOC=0.
+    class D9MTBufferArena {
+
+    public:
+
+      static constexpr VkDeviceSize SliceAlign  = 256;                 // safe for uniform/vertex/index offsets
+      static constexpr VkDeviceSize MinSlice    = SliceAlign;          // smallest size class (2^8)
+      static constexpr VkDeviceSize MaxSlice    = 64u * 1024;          // suballocate requests up to 64 KiB (2^16)
+      static constexpr VkDeviceSize ChunkSize   = 8u * 1024 * 1024;    // 8 MiB chunks
+      static constexpr uint32_t     NumClasses  = 9;                   // 256,512,1K,2K,4K,8K,16K,32K,64K
+
+      struct Slice {
+        obj_handle_t buffer  = 0;   // chunk MTLBuffer handle (NOT owned by the slice)
+        void*        mapPtr  = nullptr;
+        uint64_t     gpuAddr = 0;
+        uint32_t     offset  = 0;
+      };
+
+      bool enabled() {
+        return m_enabled;
+      }
+
+      // Attempts to carve a slice for the given byte size. Returns false for
+      // anything larger than MaxSlice (caller falls back to a dedicated buffer).
+      bool allocate(VkDeviceSize size, Slice& out) {
+        if (!m_enabled || size == 0 || size > MaxSlice)
+          return false;
+
+        uint32_t cls = sizeClass(size);
+
+        std::lock_guard<dxvk::mutex> lock(m_mutex);
+
+        auto& freeList = m_free[cls];
+        if (!freeList.empty()) {
+          out = freeList.back();
+          freeList.pop_back();
+          return true;
+        }
+
+        VkDeviceSize csz = classSize(cls);
+
+        Chunk* chunk = nullptr;
+        for (auto& c : m_chunks) {
+          if (ChunkSize - c->used >= csz) { chunk = c.get(); break; }
+        }
+
+        if (!chunk) {
+          chunk = createChunk();
+          if (!chunk)
+            return false;
+        }
+
+        out.buffer  = chunk->buffer;
+        out.offset  = uint32_t(chunk->used);
+        out.mapPtr  = chunk->base + chunk->used;
+        out.gpuAddr = chunk->gpuAddr + chunk->used;
+        chunk->used += csz;
+        return true;
+      }
+
+      // Returns a slice (described by an allocation about to be freed) to its
+      // size-class free list. size = the allocation's original requested size.
+      void free(VkDeviceSize size, const Slice& slice) {
+        uint32_t cls = sizeClass(size);
+        std::lock_guard<dxvk::mutex> lock(m_mutex);
+        m_free[cls].push_back(slice);
+      }
+
+    private:
+
+      struct Chunk {
+        obj_handle_t buffer  = 0;
+        uint8_t*     base    = nullptr;
+        uint64_t     gpuAddr = 0;
+        VkDeviceSize used    = 0;
+      };
+
+      static uint32_t sizeClass(VkDeviceSize size) {
+        VkDeviceSize s = std::max<VkDeviceSize>(size, MinSlice);
+        uint32_t cls = 0;
+        VkDeviceSize cap = MinSlice;
+        while (cap < s && cls + 1u < NumClasses) { cap <<= 1; cls++; }
+        return cls;
+      }
+
+      static VkDeviceSize classSize(uint32_t cls) {
+        return MinSlice << cls;
+      }
+
+      Chunk* createChunk() {
+        void* mem = VirtualAlloc(nullptr, ChunkSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!mem)
+          return nullptr;
+
+        WMTBufferInfo info = { };
+        info.length  = ChunkSize;
+        info.options = WMTResourceStorageModeShared;
+        info.memory.set(mem);
+
+        obj_handle_t buffer = MTLDevice_newBuffer(d9mt::mtlDevice(), &info);
+        if (!buffer) {
+          VirtualFree(mem, 0, MEM_RELEASE);
+          return nullptr;
+        }
+
+        auto chunk = std::make_unique<Chunk>();
+        chunk->buffer  = buffer;
+        chunk->base    = reinterpret_cast<uint8_t*>(mem);
+        chunk->gpuAddr = info.gpu_address;
+        chunk->used    = 0;
+        m_chunks.push_back(std::move(chunk));
+        return m_chunks.back().get();
+      }
+
+      static bool readEnabled() {
+        const char* v = std::getenv("D9MT_SUBALLOC");
+        return !(v && v[0] == '0' && v[1] == '\0');
+      }
+
+      const bool                                    m_enabled = readEnabled();
+      dxvk::mutex                                   m_mutex;
+      std::vector<std::unique_ptr<Chunk>>           m_chunks;
+      std::array<std::vector<Slice>, NumClasses>    m_free;
+
+    };
+
+    D9MTBufferArena g_bufferArena;
+
   }
 
 
@@ -519,6 +676,33 @@ namespace dxvk {
           DxvkLocalAllocationCache*   allocationCache) {
     // allocationCache deliberately unused: dedicated MTLBuffer per
     // allocation for bring-up (see METAL-BACKEND-NOTES.md)
+
+    // Fast path: carve small buffers from the suballocation arena instead of
+    // minting a fresh VirtualAlloc + MTLBuffer per request. This kills the
+    // per-DISCARD-rename churn that dominated CPU frame time. The slice is a
+    // sub-range of a persistent chunk MTLBuffer: it owns neither the handle
+    // nor the memory, so ~DxvkResourceAllocation leaves both alone, and the
+    // slice returns to its free list in freeAllocation.
+    if (D9MTBufferArena::Slice slice; g_bufferArena.allocate(createInfo.size, slice)) {
+      D9MT_ZONE(d9mt::ZoneBufAllocSub);
+      DxvkMemoryType* type = d9mtFindMemoryType(m_memTypes, m_memTypeCount,
+        allocationInfo.properties);
+
+      std::lock_guard<dxvk::mutex> lock(m_mutex);
+
+      DxvkResourceAllocation* allocation = m_allocationPool.create(this, type);
+      // intentionally NOT OwnsBuffer / OwnsMemory: the chunk owns both
+      allocation->m_resourceCookie = allocationInfo.resourceCookie;
+      allocation->m_size           = createInfo.size;
+      allocation->m_mapPtr         = slice.mapPtr;
+      allocation->m_buffer         = VkBuffer(slice.buffer);
+      allocation->m_bufferOffset   = slice.offset;
+      allocation->m_bufferAddress  = slice.gpuAddr;
+      return allocation;
+    }
+
+    D9MT_ZONE(d9mt::ZoneBufAllocDed);
+
     VkDeviceSize size = align(std::max<VkDeviceSize>(createInfo.size, 1u),
       D9MTBufferAlignment);
 
@@ -750,6 +934,23 @@ namespace dxvk {
     if (unlikely(allocation->m_flags.test(DxvkAllocationFlag::ClearOnFree))) {
       if (allocation->m_mapPtr)
         std::memset(allocation->m_mapPtr, 0, allocation->m_size);
+    }
+
+    // Suballocated slices own neither the chunk handle nor its memory; the
+    // unique signature is "has a buffer it does not own". Return the slice to
+    // the arena (its own lock) before touching the pool. ~DxvkResourceAllocation
+    // sees no Owns* flags and leaves the chunk buffer/memory untouched. This
+    // only runs after the command buffer retires, so the GPU is done with it.
+    if (allocation->m_buffer
+     && !allocation->m_flags.test(DxvkAllocationFlag::OwnsBuffer)
+     && !allocation->m_flags.test(DxvkAllocationFlag::OwnsMemory)
+     && !allocation->m_flags.test(DxvkAllocationFlag::Imported)) {
+      D9MTBufferArena::Slice slice;
+      slice.buffer  = obj_handle_t(allocation->m_buffer);
+      slice.mapPtr  = allocation->m_mapPtr;
+      slice.gpuAddr = allocation->m_bufferAddress;
+      slice.offset  = uint32_t(allocation->m_bufferOffset);
+      g_bufferArena.free(allocation->m_size, slice);
     }
 
     std::lock_guard<dxvk::mutex> lock(m_mutex);

@@ -28,6 +28,7 @@
 #include <windows.h>
 
 #include "d9mt_draw.h"
+#include "d9mt_trace.h"
 
 #include "../../vendor/spirv-cross/spirv_msl.hpp"
 
@@ -120,6 +121,7 @@ namespace dxvk::d9mt {
     std::unique_ptr<CompiledShader> compileShader(
       const Rc<DxvkShader>&             shader,
       const DxvkShaderModuleCreateInfo& moduleInfo) {
+      D9MT_ZONE(d9mt::ZoneShaderCompile);
       auto result = std::make_unique<CompiledShader>();
       result->stage = shader->info().stage;
 
