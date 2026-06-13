@@ -1,0 +1,60 @@
+src/d3d9fe/d9mt_context.cpp
+  s_ef7e2ce3136a21::t_8bf8b435161d9f 4926
+  s_ef7e2ce3136a21::t_47ebd07043e8e6 789,832,842
+  s_ef7e2ce3136a21::t_c7f7ca18a82a92 593-594
+  s_ef7e2ce3136a21::t_30447cac3870f7 902,907-908
+  s_ef7e2ce3136a21::t_45f1a28f1b620b 26
+  s_ef7e2ce3136a21::t_60848c68218e9e 911-913,924-1019,1026-1028,1033-1044,1046-1051,1054
+  s_ef7e2ce3136a21::t_9181300f14f99c 545-557,560,562-584
+  s_ef7e2ce3136a21::t_db36fbc395963f 254-276,279
+  s_ef7e2ce3136a21::t_f454994e64f6f5 699-703
+  s_ef7e2ce3136a21::t_b080e2892ad2b8 1031-1032,1052
+  s_ef7e2ce3136a21::t_fb2af436518c0e 31
+  s_ef7e2ce3136a21::t_3df17aaaa9aac7 21,23,34
+  s_ef7e2ce3136a21::t_402547d173fc8f 736-747,767,773
+  s_ef7e2ce3136a21::t_e439c61cf396cd 4138
+  s_ef7e2ce3136a21::t_8b920b3a8e3e03 914-923
+  s_ef7e2ce3136a21::t_ed7fcb4697360a 4572
+  s_ef7e2ce3136a21::t_995668a6727163 4683
+  s_ef7e2ce3136a21::t_7c9de6ede95cb2 4848
+  s_ef7e2ce3136a21::t_e0b1a6ad40d789 120-124
+  s_ef7e2ce3136a21::t_2dc97ebf519c55 138-149,152-155
+  s_ef7e2ce3136a21::t_0c3886992ad9d5 2023
+  s_ef7e2ce3136a21::t_cf3636dae8721e 4728
+  s_ef7e2ce3136a21::t_81b1b8c50725f7 4585-4596,4604
+src/d3d9fe/d9mt_shader.cpp
+  s_ef7e2ce3136a21::t_817d1e7869e994 124
+  s_ef7e2ce3136a21::t_d70e6e669f5990 31
+src/d3d9fe/d9mt_device.cpp
+  s_ef7e2ce3136a21::t_e616e0c8b8a007 609-616
+  s_ef7e2ce3136a21::t_8995409ba7800b 18
+src/d3d9fe/d9mt_resources.cpp
+  s_ef7e2ce3136a21::t_4d08c8bac06636 687
+  s_ef7e2ce3136a21::t_e8b3ec8fb291ec 704-705
+  s_ef7e2ce3136a21::t_d74ab48280a02a 22,24,26,28
+  s_ef7e2ce3136a21::t_f8d8992a2e2b19 503-508,513-654
+  s_ef7e2ce3136a21::t_567f9a32573487 679-686,688-703
+  s_ef7e2ce3136a21::t_6a1d7b6c58b2f9 31
+  s_ef7e2ce3136a21::t_46315fd4c21766 509-512
+  s_ef7e2ce3136a21::t_e1dc1daed233ac 939-955
+src/d3d9fe/d9mt_trace.h
+  s_ef7e2ce3136a21::t_126f5d122568e8 40
+  s_ef7e2ce3136a21::t_9a9981b87969d1 47
+  s_ef7e2ce3136a21::t_b9b1fcbad88d4b 1-39,41-46,48-158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "db9c6e4718f3fea080ad33fe1d4a21a5be92ebc9",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
