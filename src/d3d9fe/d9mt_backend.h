@@ -199,7 +199,7 @@ namespace dxvk::d9mt {
     float uvScale[2];
   };
 
-  obj_handle_t getBlitPso(WMTPixelFormat dstFormat, bool pointFilter = false);
+  obj_handle_t getBlitPso(WMTPixelFormat dstFormat, bool pointFilter = false, bool useGamma = false);
 
   // Depth(+stencil) SAMPLE_ZERO resolve PSO (d9mt_presenter.cpp): fullscreen
   // triangle exporting [[depth(any)]] (+ [[stencil]]) read from sample 0 of

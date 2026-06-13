@@ -27,6 +27,7 @@
 set -euo pipefail
 
 REPO="3Shain/dxmt"
+mkdir -p "$(dirname "$0")/../prebuilt"
 PREBUILT_DIR="$(cd "$(dirname "$0")/../prebuilt" && pwd)"
 TMPDIR_LOCAL="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_LOCAL"' EXIT
@@ -69,11 +70,30 @@ cp "$TMPDIR_LOCAL/${TAG_DIR}/i386-windows/winemetal.dll" \
 cp "$TMPDIR_LOCAL/${TAG_DIR}/x86_64-unix/winemetal.so" \
    "$PREBUILT_DIR/winemetal.so"
 
-echo "[fetch-winemetal] Generating 32-bit import library (gendef + dlltool)"
+echo "[fetch-winemetal] Generating 32-bit import library (python objdump + dlltool)"
 cd "$PREBUILT_DIR"
-gendef winemetal32.dll
-# imports must resolve against the installed name, winemetal.dll
-sed -i '' 's/^LIBRARY .*/LIBRARY winemetal.dll/' winemetal32.def
+python3 - winemetal32.dll winemetal32.def <<'EOF'
+import sys, subprocess, re
+dll = sys.argv[1]
+def_file = sys.argv[2]
+out = subprocess.check_output(["i686-w64-mingw32-objdump", "-p", dll]).decode("utf-8")
+start_idx = out.find("[Ordinal/Name Pointer] Table -- Ordinal Base 1")
+if start_idx == -1:
+    print("Error: Name Pointer Table not found in objdump output")
+    sys.exit(1)
+names = []
+lines = out[start_idx:].splitlines()
+for line in lines[1:]:
+    if "Base Relocations" in line or "Relocations" in line:
+        break
+    m = re.search(r'\s+0\w+\s+(\w+)\s*$', line)
+    if m:
+        names.append(m.group(1))
+with open(def_file, 'w') as f:
+    f.write("LIBRARY winemetal.dll\nEXPORTS\n")
+    for name in names:
+        f.write(f"  {name}\n")
+EOF
 i686-w64-mingw32-dlltool -d winemetal32.def -l libwinemetal.a \
   --dllname winemetal.dll
 

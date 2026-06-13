@@ -205,7 +205,7 @@ fi
 # ---------------------------------------------------------------------------
 echo "[dxvkfe] linking d3d9fe.dll"
 "$CXX" -shared -o "$BUILD/d3d9fe.dll" \
-  "${LINK_OPT[@]}" \
+  ${LINK_OPT[@]+"${LINK_OPT[@]}"} \
   "${OBJS[@]}" \
   -Wl,--gc-sections \
   -static -static-libgcc -static-libstdc++ \

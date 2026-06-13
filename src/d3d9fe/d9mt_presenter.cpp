@@ -100,6 +100,10 @@ struct d9mt_blit_vout {
   float2 uv;
 };
 
+struct DxvkGammaCp {
+  ushort r, g, b, a;
+};
+
 vertex d9mt_blit_vout d9mt_blit_vs(uint vid [[vertex_id]]) {
   float2 uv = float2((vid << 1) & 2, vid & 2);
   d9mt_blit_vout o;
@@ -121,6 +125,37 @@ fragment float4 d9mt_blit_ps_point(d9mt_blit_vout in [[stage_in]],
   constexpr sampler s(filter::nearest, address::clamp_to_edge);
   return src.sample(s, p.uv_offset + in.uv * p.uv_scale);
 }
+
+float3 apply_gamma(float3 color, constant DxvkGammaCp* ramp) {
+  float3 index = color * 255.0f;
+  int3 i0 = clamp(int3(index), 0, 255);
+  int3 i1 = min(i0 + 1, 255);
+  float3 t = index - float3(i0);
+  
+  float3 v0 = float3(ramp[i0.x].r, ramp[i0.y].g, ramp[i0.z].b) / 65535.0f;
+  float3 v1 = float3(ramp[i1.x].r, ramp[i1.y].g, ramp[i1.z].b) / 65535.0f;
+  return mix(v0, v1, t);
+}
+
+fragment float4 d9mt_blit_ps_gamma(d9mt_blit_vout in [[stage_in]],
+                                   constant d9mt_blit_params& p [[buffer(0)]],
+                                   texture2d<float> src [[texture(0)]],
+                                   constant DxvkGammaCp* ramp [[buffer(1)]]) {
+  constexpr sampler s(filter::linear, address::clamp_to_edge);
+  float4 color = src.sample(s, p.uv_offset + in.uv * p.uv_scale);
+  color.rgb = apply_gamma(color.rgb, ramp);
+  return color;
+}
+
+fragment float4 d9mt_blit_ps_point_gamma(d9mt_blit_vout in [[stage_in]],
+                                         constant d9mt_blit_params& p [[buffer(0)]],
+                                         texture2d<float> src [[texture(0)]],
+                                         constant DxvkGammaCp* ramp [[buffer(1)]]) {
+  constexpr sampler s(filter::nearest, address::clamp_to_edge);
+  float4 color = src.sample(s, p.uv_offset + in.uv * p.uv_scale);
+  color.rgb = apply_gamma(color.rgb, ramp);
+  return color;
+}
 )";
 
     std::mutex   s_blitMutex;
@@ -129,10 +164,12 @@ fragment float4 d9mt_blit_ps_point(d9mt_blit_vout in [[stage_in]],
     obj_handle_t s_blitVs = 0;
     obj_handle_t s_blitPs = 0;
     obj_handle_t s_blitPsPoint = 0;
+    obj_handle_t s_blitPsGamma = 0;
+    obj_handle_t s_blitPsPointGamma = 0;
     std::vector<std::pair<uint32_t, obj_handle_t>> s_blitPsoCache;
 
     bool ensureBlitFunctionsLocked() {
-      if (s_blitVs && s_blitPs)
+      if (s_blitVs && s_blitPs && s_blitPsGamma && s_blitPsPointGamma)
         return true;
       if (s_blitInitFailed)
         return false;
@@ -165,8 +202,10 @@ fragment float4 d9mt_blit_ps_point(d9mt_blit_vout in [[stage_in]],
       s_blitVs = MTLLibrary_newFunction(s_blitLibrary, "d9mt_blit_vs");
       s_blitPs = MTLLibrary_newFunction(s_blitLibrary, "d9mt_blit_ps");
       s_blitPsPoint = MTLLibrary_newFunction(s_blitLibrary, "d9mt_blit_ps_point");
+      s_blitPsGamma = MTLLibrary_newFunction(s_blitLibrary, "d9mt_blit_ps_gamma");
+      s_blitPsPointGamma = MTLLibrary_newFunction(s_blitLibrary, "d9mt_blit_ps_point_gamma");
 
-      if (!s_blitVs || !s_blitPs || !s_blitPsPoint) {
+      if (!s_blitVs || !s_blitPs || !s_blitPsPoint || !s_blitPsGamma || !s_blitPsPointGamma) {
         Logger::err("d9mt: blitter: blit functions missing from compiled library");
         s_blitInitFailed = true;
         return false;
@@ -178,10 +217,10 @@ fragment float4 d9mt_blit_ps_point(d9mt_blit_vout in [[stage_in]],
 
   // non-static: also used by DxvkContext::blitImageView / copyImage /
   // resolveImage (declared in d9mt_backend.h)
-  obj_handle_t getBlitPso(WMTPixelFormat dstFormat, bool pointFilter) {
+  obj_handle_t getBlitPso(WMTPixelFormat dstFormat, bool pointFilter, bool useGamma) {
     std::lock_guard<std::mutex> lock(s_blitMutex);
 
-    uint32_t key = uint32_t(dstFormat) | (pointFilter ? 0x80000000u : 0u);
+    uint32_t key = uint32_t(dstFormat) | (pointFilter ? 0x80000000u : 0u) | (useGamma ? 0x40000000u : 0u);
 
     for (const auto& e : s_blitPsoCache) {
       if (e.first == key)
@@ -200,7 +239,8 @@ fragment float4 d9mt_blit_ps_point(d9mt_blit_vout in [[stage_in]],
     info.depth_pixel_format = WMTPixelFormatInvalid;
     info.stencil_pixel_format = WMTPixelFormatInvalid;
     info.vertex_function = s_blitVs;
-    info.fragment_function = pointFilter ? s_blitPsPoint : s_blitPs;
+    info.fragment_function = useGamma ? (pointFilter ? s_blitPsPointGamma : s_blitPsGamma)
+                                      : (pointFilter ? s_blitPsPoint : s_blitPs);
     info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle;
     info.max_tessellation_factor = 16; // Metal default; 0 trips validation
 
@@ -483,6 +523,7 @@ fragment void d9mt_dsclear_fs() {}
     bool warnedGamma  = false;
     bool warnedCursor = false;
     bool warnedMsaa   = false;
+    std::vector<DxvkGammaCp> gammaRamp;
   };
 
   namespace {
@@ -960,12 +1001,9 @@ namespace dxvk {
       return;
     }
 
-    // unimplemented composition features — fail loud, keep presenting
-    if (m_gammaCpCount && !bs.warnedGamma) {
-      bs.warnedGamma = true;
-      Logger::err("d9mt: blitter: non-identity gamma ramp not implemented — ignored");
-    }
+    bool useGamma = (m_gammaCpCount != 0 && !bs.gammaRamp.empty());
 
+    // unimplemented composition features — fail loud, keep presenting
     if (bs.cursorTextureSet && m_cursorRect.extent.width && !bs.warnedCursor) {
       bs.warnedCursor = true;
       Logger::err("d9mt: blitter: software cursor composition not implemented — ignored");
@@ -1000,7 +1038,8 @@ namespace dxvk {
      && srcRect.extent.width  == dstRect.extent.width
      && srcRect.extent.height == dstRect.extent.height
      && !srcView->info().packedSwizzle
-     && !dstView->info().packedSwizzle) {
+     && !dstView->info().packedSwizzle
+     && !useGamma) {
       wmtcmd_blit_copy_from_texture_to_texture cp = { };
       cp.type = WMTBlitCommandCopyFromTextureToTexture;
       cp.src = srcHandle;
@@ -1024,7 +1063,7 @@ namespace dxvk {
       return;
     }
 
-    obj_handle_t pso = d9mt::getBlitPso(dstFormat);
+    obj_handle_t pso = d9mt::getBlitPso(dstFormat, false, useGamma);
     if (!pso)
       return;
 
@@ -1057,6 +1096,7 @@ namespace dxvk {
     wmtcmd_render_useresource use = { };
     wmtcmd_render_settexture setTex = { };
     wmtcmd_render_setbytes setBytes = { };
+    wmtcmd_render_setbytes setGammaBytes = { };
     wmtcmd_render_draw draw = { };
 
     setPso.type = WMTRenderCommandSetPSO;
@@ -1089,7 +1129,16 @@ namespace dxvk {
     setTex.index = 0;
 
     setBytes.type = WMTRenderCommandSetFragmentBytes;
-    setBytes.next.set(&draw);
+    if (useGamma) {
+      setBytes.next.set(&setGammaBytes);
+      setGammaBytes.type = WMTRenderCommandSetFragmentBytes;
+      setGammaBytes.next.set(&draw);
+      setGammaBytes.bytes.set(bs.gammaRamp.data());
+      setGammaBytes.length = bs.gammaRamp.size() * sizeof(DxvkGammaCp);
+      setGammaBytes.index = 1;
+    } else {
+      setBytes.next.set(&draw);
+    }
     setBytes.bytes.set(&params);
     setBytes.length = sizeof(params);
     setBytes.index = 0;
@@ -1133,10 +1182,15 @@ namespace dxvk {
       cpCount = 0;
     }
 
+    auto& bs = d9mt::blitterState(this);
     m_gammaCpCount = identity ? 0u : cpCount;
 
-    if (m_gammaCpCount)
-      d9mt::blitterState(this).warnedGamma = false; // re-warn on new ramps
+    if (m_gammaCpCount) {
+      bs.gammaRamp.assign(cpData, cpData + cpCount);
+      bs.warnedGamma = false; // re-warn on new ramps
+    } else {
+      bs.gammaRamp.clear();
+    }
   }
 
 
