@@ -1,0 +1,19 @@
+src/d3d9fe/d9mt_context.cpp
+  s_ef7e2ce3136a21::t_07a8290766775f 979,981-988,990
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "043ad4ce09d2b31a10bf858949a608ee96ce6862",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
