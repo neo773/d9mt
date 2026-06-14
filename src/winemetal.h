@@ -477,7 +477,7 @@ enum WMTTextureUsage : uint32_t {
   WMTTextureUsageShaderAtomic = 32,
 };
 
-enum WMTTextureSwizzle : uint8_t {
+enum WMTTextureSwizzle {
   WMTTextureSwizzleZero = 0,
   WMTTextureSwizzleOne = 1,
   WMTTextureSwizzleRed = 2,
