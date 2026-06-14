@@ -1,0 +1,22 @@
+examples/play-gta4.sh
+  s_ef7e2ce3136a21::t_59c18e5d8676ee 1-103
+examples/GTA-IV-SETUP.md
+  s_ef7e2ce3136a21::t_79c485f66108ed 1-3,5-12,15-40,42-46,48-60,62-90
+  s_ef7e2ce3136a21::t_29bb940e4c93e3 13-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b9e6640dcdaa97fbbd8f5ace18835efbdf3111d9",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
