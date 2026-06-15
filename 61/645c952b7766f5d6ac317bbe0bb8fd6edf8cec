@@ -1,0 +1,20 @@
+src/d3d9fe/d9mt_resources.cpp
+  s_ef7e2ce3136a21::t_d6f2c4c69f3c73 738-743
+  s_ef7e2ce3136a21::t_5e2f538fd3cfbe 632-640
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.7",
+  "base_commit_sha": "61645c952b7766f5d6ac317bbe0bb8fd6edf8cec",
+  "prompts": {},
+  "sessions": {
+    "s_ef7e2ce3136a21": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4aaca861-3e9c-4b80-ba4f-5c006b20549c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
