@@ -19,11 +19,14 @@
 //    boundaries (single queue, automatic hazard tracking).
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include <windows.h>
 
@@ -1027,6 +1030,91 @@ namespace dxvk::d9mt {
 
   }
 
+  // ==========================================================================
+  // Persistent PSO pre-warm ("state cache"). The metallib (shader source->AIR)
+  // is disk-cached, but the PSO objects (newRenderPipelineState, vs+fs+state)
+  // are rebuilt lazily on first draw each run -> geometry pops in. This records
+  // every PSO key to a per-game file keyed by shader CONTENT hash (getHash(),
+  // stable across runs because it derives from the SPIR-V SHA-1), and on the
+  // next launch pre-compiles each recorded PSO as soon as both of its shaders
+  // have been seen — so they're ready before the draw. Correctness is never at
+  // risk from hash collisions: the real draw matches by shader POINTER+state, so
+  // a collided pre-warm entry simply never matches (a wasted compile, not a bug).
+  // CS-thread only (called under s_psoMutex). D9MT_PSO_PREWARM=0 disables.
+  // ==========================================================================
+  namespace {
+    bool psoPrewarmEnabled() {
+      // DEFAULT ON. (An earlier "crash" blamed on this was actually a two-games-at-
+      // once collision — COD4 left running while L.A. Noire launched; a clean run
+      // with comprehensive wine teardown replays fine.) Pre-warm replays recorded
+      // PSOs as their shaders are first seen, so warm runs reach smoothness fast.
+      // D9MT_PSO_PREWARM=0 disables. Needs async PSO on.
+      static const bool e = [] {
+        const char* v = std::getenv("D9MT_PSO_PREWARM");
+        return !(v && v[0] == '0' && v[1] == '\0');
+      }();
+      return e;
+    }
+
+    struct PrewarmRec { uint64_t vsHash; uint64_t fsHash; std::vector<uint8_t> state; bool done; };
+    std::vector<PrewarmRec>                              s_prewarmRecords; // disk records to replay
+    std::unordered_map<uint64_t, std::vector<uint32_t>>  s_pendingByHash;  // shaderHash -> record idxs
+    std::unordered_map<uint64_t, Rc<DxvkShader>>         s_shaderByHash;   // shaders seen this run
+    uint32_t s_prewarmRemaining = 0;  // records not yet built (when 0 we free everything)
+    FILE*    s_prewarmFile   = nullptr;
+    bool     s_prewarmLoaded = false;
+    constexpr uint32_t kPrewarmMagic = 0x57503944u; // 'D9PW'
+    constexpr uint32_t kPrewarmVer   = 1u;
+
+    void prewarmLoad(uint32_t stateSize) {
+      s_prewarmLoaded = true;
+      bool valid = false;
+      if (FILE* f = std::fopen("d9mt_pso_cache.bin", "rb")) {
+        uint32_t magic = 0, ver = 0, ss = 0;
+        if (std::fread(&magic, 4, 1, f) == 1 && std::fread(&ver, 4, 1, f) == 1 &&
+            std::fread(&ss, 4, 1, f) == 1 && magic == kPrewarmMagic &&
+            ver == kPrewarmVer && ss == stateSize) {
+          valid = true;
+          uint64_t h[2];
+          std::vector<uint8_t> st(stateSize);
+          while (std::fread(h, 8, 2, f) == 2 &&
+                 std::fread(st.data(), 1, stateSize, f) == stateSize) {
+            uint32_t idx = uint32_t(s_prewarmRecords.size());
+            s_prewarmRecords.push_back({h[0], h[1], st, false});
+            // Index by BOTH shaders so a record is found in O(records-for-this-shader)
+            // when either of its shaders is seen — no O(all-pending) scan, so the
+            // shader-creation hook holds s_psoMutex only briefly (no draw-thread stutter).
+            s_pendingByHash[h[0]].push_back(idx);
+            if (h[1] != h[0]) s_pendingByHash[h[1]].push_back(idx);
+          }
+          s_prewarmRemaining = uint32_t(s_prewarmRecords.size());
+        }
+        std::fclose(f);
+      }
+      // Append to a valid file; otherwise (new/stale/version-bumped) rewrite the header.
+      s_prewarmFile = std::fopen("d9mt_pso_cache.bin", valid ? "ab" : "wb");
+      if (s_prewarmFile && !valid) {
+        std::fwrite(&kPrewarmMagic, 4, 1, s_prewarmFile);
+        std::fwrite(&kPrewarmVer, 4, 1, s_prewarmFile);
+        std::fwrite(&stateSize, 4, 1, s_prewarmFile);
+        std::fflush(s_prewarmFile);
+        s_prewarmRecords.clear(); s_pendingByHash.clear(); s_prewarmRemaining = 0;
+      }
+      d9mt::logf("d9mt: PSO pre-warm: %u recorded PSOs to replay", s_prewarmRemaining);
+    }
+
+    void prewarmAppend(uint64_t vsHash, uint64_t fsHash, const void* state, uint32_t stateSize) {
+      if (!s_prewarmFile) return;
+      uint64_t h[2] = { vsHash, fsHash };
+      std::fwrite(h, 8, 2, s_prewarmFile);
+      std::fwrite(state, 1, stateSize, s_prewarmFile);
+      std::fflush(s_prewarmFile);
+    }
+  }
+
+  // fwd: defined just below, builds+enqueues a PSO from a key (caller holds s_psoMutex)
+  static void prewarmShaderSeen(uint64_t newHash);
+
   static const PsoEntry* getRenderPso(
     const PsoKey&         key,
     const Rc<DxvkShader>& vs,
@@ -1035,6 +1123,24 @@ namespace dxvk::d9mt {
     // lock. Workers only write entry->pso (atomic) on their own entry; they
     // never touch the map, so cache lookups/inserts here are race-free.
     std::lock_guard<std::mutex> lock(s_psoMutex);
+
+    // Pre-warm: register these shaders by content hash; the first time each one
+    // is seen, replay every recorded PSO that uses it (compiled in the background)
+    // so its variants are ready before their draw. Only meaningful with async on.
+    const bool prewarm = psoPrewarmEnabled() && asyncPsoEnabled();
+    if (prewarm) {
+      if (!s_prewarmLoaded) prewarmLoad(uint32_t(sizeof(key.state)));
+      // Memory bound: only register/retain shaders WHILE there are recorded PSOs
+      // still waiting to be pre-warmed. Once they drain (warmup done), prewarmShaderSeen
+      // frees s_shaderByHash + the index, so we don't hold every shader Rc for the whole
+      // session — the replay machinery costs nothing post-warmup.
+      if (s_prewarmRemaining) {
+        uint64_t vh = uint64_t(vs->getHash());
+        uint64_t fh = uint64_t(fs->getHash());
+        if (s_shaderByHash.emplace(vh, vs).second) prewarmShaderSeen(vh);
+        if (s_shaderByHash.emplace(fh, fs).second) prewarmShaderSeen(fh);
+      }
+    }
 
     {
       D9MT_ZONE(d9mt::ZonePsoLookup);
@@ -1051,6 +1157,11 @@ namespace dxvk::d9mt {
     PsoEntry* ptr = entry.get();
     s_psoCache.emplace(key, std::move(entry));
 
+    // Record this PSO key for next-launch pre-warm (keyed by shader content hash).
+    if (prewarm)
+      prewarmAppend(uint64_t(vs->getHash()), uint64_t(fs->getHash()),
+                    &key.state, uint32_t(sizeof(key.state)));
+
     if (asyncPsoEnabled()) {
       // pso stays 0 until the worker finishes; the draw site skips until then.
       s_psoWorkers.enqueue(key, ptr);
@@ -1060,6 +1171,70 @@ namespace dxvk::d9mt {
     }
 
     return ptr;
+  }
+
+  // Caller holds s_psoMutex. A shader (newHash) just became known this run: build
+  // + background-compile every recorded PSO that uses it whose OTHER shader is also
+  // known now, so it's ready before its draw. Matches by shader pointer at draw
+  // time, so a hash collision here only wastes a compile (never binds wrong state).
+  static void prewarmShaderSeen(uint64_t newHash) {
+    auto it = s_pendingByHash.find(newHash);
+    if (it == s_pendingByHash.end())
+      return;
+    for (uint32_t idx : it->second) {
+      PrewarmRec& rec = s_prewarmRecords[idx];
+      if (rec.done)
+        continue;
+      auto vsIt = s_shaderByHash.find(rec.vsHash);
+      auto fsIt = s_shaderByHash.find(rec.fsHash);
+      if (vsIt == s_shaderByHash.end() || fsIt == s_shaderByHash.end())
+        continue; // the other shader isn't known yet; fires when it is (its hash list)
+      PsoKey key;
+      key.vs = vsIt->second.ptr();
+      key.fs = fsIt->second.ptr();
+      std::memcpy(&key.state, rec.state.data(), sizeof(key.state));
+      if (s_psoCache.find(key) == s_psoCache.end()) {
+        auto entry = std::make_unique<PsoEntry>();
+        entry->vsRef = vsIt->second;
+        entry->fsRef = fsIt->second;
+        PsoEntry* ptr = entry.get();
+        s_psoCache.emplace(key, std::move(entry));
+        s_psoWorkers.enqueue(key, ptr); // background pre-compile
+      }
+      rec.done = true;
+      if (s_prewarmRemaining) s_prewarmRemaining--;
+    }
+    // newHash fully processed: undone records here are still reachable via their OTHER
+    // shader's index list, so drop this list to keep the index small.
+    s_pendingByHash.erase(it);
+    // Warmup done: free the index + retained shader Rcs (the built PSOs keep their own
+    // refs via entry->vsRef/fsRef). Bounds replay memory to the warmup window.
+    if (s_prewarmRemaining == 0) {
+      s_shaderByHash.clear();
+      s_pendingByHash.clear();
+      s_prewarmRecords.clear();
+      s_prewarmRecords.shrink_to_fit();
+    }
+  }
+
+  // PUBLIC hook (external linkage): called from D3D9DeviceEx::Create{Vertex,Pixel}Shader
+  // when the GAME creates a shader — which happens during the LOADING screen, BEFORE
+  // any draw. Registering here (instead of only at first draw via getRenderPso) lets us
+  // pre-compile every recorded PSO for that shader during load, so the world is fully
+  // built before gameplay instead of "filling in" over the first frames. Runs on the
+  // app thread, so it takes s_psoMutex (same lock getRenderPso uses on the CS thread);
+  // lock order is app(DXVK)→s_psoMutex and CS→s_psoMutex only, so no deadlock.
+  void prewarmOnShaderCreated(const Rc<DxvkShader>& shader) {
+    if (!shader || !psoPrewarmEnabled() || !asyncPsoEnabled())
+      return;
+    std::lock_guard<std::mutex> lock(s_psoMutex);
+    if (!s_prewarmLoaded)
+      prewarmLoad(uint32_t(sizeof(DxvkGraphicsPipelineStateInfo)));
+    if (!s_prewarmRemaining)
+      return; // nothing recorded to pre-warm (e.g. first ever run, or warmup done)
+    uint64_t h = uint64_t(shader->getHash());
+    if (s_shaderByHash.emplace(h, shader).second)
+      prewarmShaderSeen(h);
   }
 
 
