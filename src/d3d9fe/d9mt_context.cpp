@@ -736,6 +736,15 @@ namespace dxvk::d9mt {
     std::unordered_map<PsoKey, std::unique_ptr<PsoEntry>, PsoKeyHash> s_psoCache;
   }
 
+  // Persist a PSO record for next-launch pre-warm, but ONLY for pipelines that
+  // actually compiled (called from compilePso after success). Recording only
+  // proven-good state is what keeps replay safe: a state that fails to build is
+  // never written, so it can never be replayed into a permanently-null cache
+  // entry that would stall its draws. No-ops if pre-warm is off. Thread-safe
+  // (runs on worker threads). Defined with the pre-warm machinery below.
+  static void prewarmRecordCompiled(
+    uint64_t vsHash, uint64_t fsHash, const void* state, uint32_t stateSize);
+
   // Builds the Metal render PSO into a preallocated entry whose vsRef/fsRef
   // are already set (caller holds no locks; safe to run on a worker thread —
   // touches only the passed entry, the mutex-guarded shader caches, and
@@ -909,6 +918,13 @@ namespace dxvk::d9mt {
 
     // release store: publishes vs/fs and the whole entry to the CS thread
     entry->pso.store(params.ret_pso, std::memory_order_release);
+
+    // Compile succeeded -> this exact (shaders + state) is buildable, so it is
+    // safe to persist for next-launch pre-warm. Recording here (not at the
+    // miss site) is the invariant that makes replay correct: only pipelines
+    // proven to build ever reach the cache file. Deduped + no-op when off.
+    prewarmRecordCompiled(uint64_t(vs->getHash()), uint64_t(fs->getHash()),
+                          &key.state, uint32_t(sizeof(key.state)));
   }
 
   // --------------------------------------------------------------------------
@@ -1044,11 +1060,12 @@ namespace dxvk::d9mt {
   // ==========================================================================
   namespace {
     bool psoPrewarmEnabled() {
-      // DEFAULT ON. (An earlier "crash" blamed on this was actually a two-games-at-
-      // once collision — COD4 left running while L.A. Noire launched; a clean run
-      // with comprehensive wine teardown replays fine.) Pre-warm replays recorded
-      // PSOs as their shaders are first seen, so warm runs reach smoothness fast.
-      // D9MT_PSO_PREWARM=0 disables. Needs async PSO on.
+      // Pre-warm replays recorded PSOs as their shaders are first seen, so warm
+      // runs reach steady state faster (this driver's analogue of DXVK's
+      // dxvk_state_cache). Only pipelines that have actually compiled are ever
+      // persisted (see prewarmRecordCompiled), so every replayed record is
+      // known-buildable — replay can't produce a permanently-null PSO entry that
+      // would stall its draws. D9MT_PSO_PREWARM=0 disables it; needs async PSO on.
       static const bool e = [] {
         const char* v = std::getenv("D9MT_PSO_PREWARM");
         return !(v && v[0] == '0' && v[1] == '\0');
@@ -1064,9 +1081,38 @@ namespace dxvk::d9mt {
     FILE*    s_prewarmFile   = nullptr;
     bool     s_prewarmLoaded = false;
     constexpr uint32_t kPrewarmMagic = 0x57503944u; // 'D9PW'
-    constexpr uint32_t kPrewarmVer   = 1u;
+    // v2: records are now written only after a successful compile (v1 wrote them
+    // at the miss site, before the pipeline was proven to build, so a v1 file can
+    // contain states that fail on replay -> stalled draws). Reject v1 files.
+    constexpr uint32_t kPrewarmVer   = 2u;
+
+    // The cache file is now written from the PSO worker threads (record-on-
+    // success), so file access + the dedup set need their own lock — separate
+    // from s_psoMutex, which the workers deliberately never take. Lock order is
+    // only ever s_psoMutex -> s_prewarmFileMutex (prewarmLoad); workers take
+    // s_prewarmFileMutex alone, so there is no inversion.
+    std::mutex                   s_prewarmFileMutex;
+    std::unordered_set<uint64_t> s_prewarmPersisted; // (vs,fs,state) digests on disk
+
+    // FNV-1a over (vsHash, fsHash, state bytes): the dedup identity of a record,
+    // so a state already on disk (from a prior run or earlier this run) is never
+    // written twice and never replays as a duplicate compile.
+    uint64_t prewarmDigest(uint64_t vsHash, uint64_t fsHash,
+                           const void* state, uint32_t n) {
+      uint64_t h = 1469598103934665603ull;
+      auto mix = [&](const uint8_t* p, size_t len) {
+        for (size_t i = 0; i < len; i++) { h ^= p[i]; h *= 1099511628211ull; }
+      };
+      mix(reinterpret_cast<const uint8_t*>(&vsHash), 8);
+      mix(reinterpret_cast<const uint8_t*>(&fsHash), 8);
+      mix(reinterpret_cast<const uint8_t*>(state), n);
+      return h;
+    }
 
     void prewarmLoad(uint32_t stateSize) {
+      // Holds the file lock so the open file handle + dedup set are fully
+      // published before any worker thread can record against them.
+      std::lock_guard<std::mutex> lk(s_prewarmFileMutex);
       s_prewarmLoaded = true;
       bool valid = false;
       if (FILE* f = std::fopen("d9mt_pso_cache.bin", "rb")) {
@@ -1086,6 +1132,8 @@ namespace dxvk::d9mt {
             // shader-creation hook holds s_psoMutex only briefly (no draw-thread stutter).
             s_pendingByHash[h[0]].push_back(idx);
             if (h[1] != h[0]) s_pendingByHash[h[1]].push_back(idx);
+            // Remember it as already-on-disk so record-on-success won't rewrite it.
+            s_prewarmPersisted.insert(prewarmDigest(h[0], h[1], st.data(), stateSize));
           }
           s_prewarmRemaining = uint32_t(s_prewarmRecords.size());
         }
@@ -1099,17 +1147,29 @@ namespace dxvk::d9mt {
         std::fwrite(&stateSize, 4, 1, s_prewarmFile);
         std::fflush(s_prewarmFile);
         s_prewarmRecords.clear(); s_pendingByHash.clear(); s_prewarmRemaining = 0;
+        s_prewarmPersisted.clear();
       }
       d9mt::logf("d9mt: PSO pre-warm: %u recorded PSOs to replay", s_prewarmRemaining);
     }
+  }
 
-    void prewarmAppend(uint64_t vsHash, uint64_t fsHash, const void* state, uint32_t stateSize) {
-      if (!s_prewarmFile) return;
-      uint64_t h[2] = { vsHash, fsHash };
-      std::fwrite(h, 8, 2, s_prewarmFile);
-      std::fwrite(state, 1, stateSize, s_prewarmFile);
-      std::fflush(s_prewarmFile);
-    }
+  // Persist a proven-good PSO (called from compilePso on a worker after the
+  // pipeline compiled). Deduped against everything already on disk, and a no-op
+  // when pre-warm is off — so the cache file only ever accumulates pipelines
+  // that are known to build, which is what makes next-launch replay safe.
+  static void prewarmRecordCompiled(
+      uint64_t vsHash, uint64_t fsHash, const void* state, uint32_t stateSize) {
+    if (!psoPrewarmEnabled() || !asyncPsoEnabled())
+      return;
+    std::lock_guard<std::mutex> lk(s_prewarmFileMutex);
+    if (!s_prewarmFile)
+      return;
+    if (!s_prewarmPersisted.insert(prewarmDigest(vsHash, fsHash, state, stateSize)).second)
+      return; // already on disk
+    uint64_t h[2] = { vsHash, fsHash };
+    std::fwrite(h, 8, 2, s_prewarmFile);
+    std::fwrite(state, 1, stateSize, s_prewarmFile);
+    std::fflush(s_prewarmFile);
   }
 
   // fwd: defined just below, builds+enqueues a PSO from a key (caller holds s_psoMutex)
@@ -1157,10 +1217,9 @@ namespace dxvk::d9mt {
     PsoEntry* ptr = entry.get();
     s_psoCache.emplace(key, std::move(entry));
 
-    // Record this PSO key for next-launch pre-warm (keyed by shader content hash).
-    if (prewarm)
-      prewarmAppend(uint64_t(vs->getHash()), uint64_t(fs->getHash()),
-                    &key.state, uint32_t(sizeof(key.state)));
+    // NOTE: the record is NOT written here. The pipeline isn't proven to build
+    // yet — compilePso persists it (deduped) only after a successful compile, so
+    // a state that fails never lands in the cache file to be replayed next run.
 
     if (asyncPsoEnabled()) {
       // pso stays 0 until the worker finishes; the draw site skips until then.

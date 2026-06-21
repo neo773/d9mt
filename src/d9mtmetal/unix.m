@@ -41,7 +41,13 @@ static NTSTATUS d9mt_new_library_from_source(void *args) {
 
   MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
   opts.languageVersion = MTLLanguageVersion3_0;
-  opts.fastMathEnabled = p->fast_math != 0;
+  // FAST math, unconditionally — the only mode that keeps D3D9 shader semantics
+  // correct here. D3D9 assumes fast-math float behavior; .relaxed/.safe change
+  // reassociation/rounding enough to corrupt shader-computed positions (collapsed
+  // geometry) and cost framerate. Any precision artifact from .fast is a per-shader
+  // translation bug (e.g. unguarded normalize()/rsqrt producing unclamped NaN),
+  // fixed in the SPIR-V->MSL path — never by globally slowing every game's math.
+  opts.mathMode = MTLMathModeFast;
 
   NSError *err = nil;
   id<MTLLibrary> lib = [device newLibraryWithSource:src
@@ -506,7 +512,10 @@ static NSData *d9mt_cli_compile(const char *source, size_t source_len,
     const char *argv[] = {
         tool.fileSystemRepresentation,
         "-std=metal3.0",
-        fast_math ? "-ffast-math" : "-fno-fast-math",
+        // FAST, unconditionally — matches opts.mathMode=fast in the in-process
+        // path (the fast_math arg is ignored; both paths must agree so the disk
+        // cache is consistent regardless of which backend compiled an entry).
+        "-ffast-math",
         "-o", outPath, inPath, NULL };
     pid_t pid = 0;
     int rc = posix_spawn(&pid, argv[0], NULL, NULL,
@@ -541,7 +550,7 @@ d9mt_source_compile(id<MTLDevice> device, const char *source,
     return nil;
   MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
   opts.languageVersion = MTLLanguageVersion3_0;
-  opts.fastMathEnabled = fast_math;
+  opts.mathMode = MTLMathModeFast;  // fast always — see d9mt_library_for_source
   id<MTLLibrary> lib = [device newLibraryWithSource:src options:opts
                                               error:err_out];
   [opts release];

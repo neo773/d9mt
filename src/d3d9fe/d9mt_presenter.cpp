@@ -524,9 +524,9 @@ fragment void d9mt_dsclear_fs() {}
     bool warnedCursor = false;
     bool warnedMsaa   = false;
     std::vector<DxvkGammaCp> gammaRamp;
-    // Cached 1-sample target for resolving a multisampled present source (COD4's
-    // 4x MSAA swapchain). Created lazily, reused every frame, recreated on a
-    // size/format change. The downstream sample path then scales it to the dst.
+    // Cached 1-sample target for resolving a multisampled present source (a game
+    // that requests an MSAA swapchain). Created lazily, reused every frame,
+    // recreated on a size/format change. The downstream sample path scales it to dst.
     obj_handle_t msaaResolveTex = 0;
     uint32_t msaaResolveW = 0, msaaResolveH = 0, msaaResolveFmt = 0;
   };
@@ -1017,14 +1017,14 @@ namespace dxvk {
     VkExtent3D dstExtent = dstView->mipLevelExtent(0);
     VkExtent3D srcExtent = srcView->mipLevelExtent(0);
 
-    // Multisampled present source (e.g. COD4 auto-enables a 4x MSAA swapchain).
+    // Multisampled present source (a game that requests an MSAA swapchain).
     // Neither the blit fast-path nor the fullscreen-sample path can read an MSAA
     // texture, so FIRST resolve it to a cached 1-sample texture (idiomatic Metal:
     // a no-draw render pass that LOADs the MSAA attachment and resolves it at store
     // time — ported from our DXMT resolve-aware StretchRect). Then fall through with
     // srcHandle pointing at the resolved 1-sample texture, so the existing downstream
-    // path handles any scale (COD4's drawable is 20px shorter than the backbuffer),
-    // format conversion, swizzle, and gamma for free.
+    // path handles any scale (a drawable smaller than the backbuffer), format
+    // conversion, swizzle, and gamma for free.
     if (srcView->image()->info().sampleCount != VK_SAMPLE_COUNT_1_BIT) {
       WMTPixelFormat sF = d9mt::wmtFormatFor(srcView->info().format);
       if (sF == WMTPixelFormatInvalid || srcView->info().packedSwizzle) {
