@@ -3456,6 +3456,10 @@ namespace dxvk {
   }
 
 
+  // d9mt: pre-warm hook — pre-compile this shader's recorded PSOs at shader-creation
+  // (load) time, before any draw. Defined in src/d3d9fe/d9mt_context.cpp.
+  namespace d9mt { void prewarmOnShaderCreated(const Rc<DxvkShader>&); }
+
   HRESULT STDMETHODCALLTYPE D3D9DeviceEx::CreateVertexShader(
     const DWORD*                   pFunction,
           IDirect3DVertexShader9** ppShader) {
@@ -3477,6 +3481,8 @@ namespace dxvk {
       pFunction,
       &moduleInfo)))
       return D3DERR_INVALIDCALL;
+
+    d9mt::prewarmOnShaderCreated(module.GetShader());
 
     *ppShader = ref(new D3D9VertexShader(this,
       &m_shaderAllocator,
@@ -3832,6 +3838,8 @@ namespace dxvk {
       pFunction,
       &moduleInfo)))
       return D3DERR_INVALIDCALL;
+
+    d9mt::prewarmOnShaderCreated(module.GetShader());
 
     *ppShader = ref(new D3D9PixelShader(this,
       &m_shaderAllocator,

@@ -97,6 +97,14 @@ namespace dxvk::d9mt {
       }();
       return s_enabled;
     }
+
+    // Math mode is FIXED to FAST in the native compiler (d9mtmetal unix.m): it's
+    // the mode that preserves D3D9 float semantics. .relaxed/.safe alter
+    // reassociation/rounding enough to corrupt shader-computed positions and cost
+    // framerate, so they are never used. A precision artifact under .fast is a
+    // per-shader translation bug, fixed in the SPIR-V->MSL path. kMetallibMathMode
+    // tags the cache key so libraries compiled under a different mode aren't reused.
+    constexpr uint8_t kMetallibMathMode = 1u; // 0=safe 1=fast 2=relaxed
   }
 
   // ==========================================================================
@@ -354,7 +362,7 @@ namespace dxvk::d9mt {
         // Cache path: compute the content key and let the native side resolve
         // hit-load / miss-compile-store-load / live-fallback uniformly. The
         // MSL source is only read native-side on a cache MISS.
-        Sha1Hash key = computeMetallibKey(msl, 0x0300u, /*fastMath*/ 1u,
+        Sha1Hash key = computeMetallibKey(msl, 0x0300u, kMetallibMathMode,
                                           uint32_t(D9MT_SOURCE_MSL_TEXT));
 
         d9mt_library_params lp;
@@ -365,7 +373,7 @@ namespace dxvk::d9mt {
         lp.source_ptr   = uint64_t(uintptr_t(msl.data()));
         lp.source_len   = msl.size();
         lp.source_kind  = D9MT_SOURCE_MSL_TEXT;
-        lp.target_flags = D9MT_TARGET_FAST_MATH;
+        lp.target_flags = 0u; // math mode fixed to relaxed native-side; flag unused
 
         int status = D9MT_UnixCall(D9MT_FUNC_LIBRARY_FOR_KEY, &lp);
         if (status != 0 || !lp.ret_library) {
@@ -391,7 +399,7 @@ namespace dxvk::d9mt {
         lp.device     = device;
         lp.source_ptr = uint64_t(uintptr_t(msl.data()));
         lp.source_len = msl.size();
-        lp.fast_math  = 1;
+        lp.fast_math  = 0u; // math mode fixed to relaxed native-side; flag unused
 
         int status = D9MT_UnixCall(D9MT_FUNC_NEW_LIBRARY_FROM_SOURCE, &lp);
         if (status != 0 || !lp.ret_library) {
