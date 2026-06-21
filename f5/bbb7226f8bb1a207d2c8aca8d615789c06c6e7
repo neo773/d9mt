@@ -1,0 +1,41 @@
+src/d3d9fe/d9mt_context.cpp
+  s_6864e6af5f81d6::t_e6dd0ca52093e3 1084-1087
+  s_6864e6af5f81d6::t_3ac20a3e76bbf8 1089-1110
+  s_6864e6af5f81d6::t_1a996b027f53a2 1113-1115,1135-1136,1150,1154,1156-1172
+  s_6864e6af5f81d6::t_13c690a6fe2ff5 1064-1068
+  s_6864e6af5f81d6::t_c19b2bfb28238f 921-927
+  s_6864e6af5f81d6::t_fa71aea5f4d2a9 1063
+  s_6864e6af5f81d6::t_a123ff4d1dc7a9 739-747
+  s_6864e6af5f81d6::t_da29f7ac018cec 1220-1222
+  s_6864e6af5f81d6::t_dd390f3b82821c 1088
+src/d3d9fe/d9mt_presenter.cpp
+  s_6864e6af5f81d6::t_79c295a7fa0b42 1020,1026-1027
+  s_6864e6af5f81d6::t_4c695222818b50 527-529
+src/d9mtmetal/unix.m
+  s_6864e6af5f81d6::t_fdf9342a147ddb 553
+  s_6864e6af5f81d6::t_07bf0c8cb40514 44-49
+  s_6864e6af5f81d6::t_2a2c6f97b6233f 515-517
+  s_6864e6af5f81d6::t_a7647c1e607bcc 518
+  s_6864e6af5f81d6::t_2171dcc84f8178 50
+src/d3d9fe/d9mt_shader.cpp
+  s_6864e6af5f81d6::t_df58830befd6a4 365
+  s_6864e6af5f81d6::t_61544327b96325 402
+  s_6864e6af5f81d6::t_be9c2082d28beb 376
+  s_6864e6af5f81d6::t_07c475bb568eb1 101-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "f5bbb7226f8bb1a207d2c8aca8d615789c06c6e7",
+  "prompts": {},
+  "sessions": {
+    "s_6864e6af5f81d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "515a251f-16ea-4ba1-891d-86efcd38cadc",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
