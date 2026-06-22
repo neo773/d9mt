@@ -661,6 +661,75 @@ namespace dxvk {
 
     D9MTBufferArena g_bufferArena;
 
+    // Recycle pool for DEDICATED buffers (requests too big for the arena's
+    // MaxSlice). Bring-up minted a fresh VirtualAlloc + MTLDevice_newBuffer +
+    // full-buffer memset (Rosetta pre-fault) on EVERY such allocation; the
+    // per-frame trace showed ~12/frame costing ~6 ms (the bufDed zone). These
+    // are recurring sizes (UP-ring orphans, constant-ring wraps, large
+    // staging), so an exact-aligned-size free list recycles them: a hit skips
+    // the VirtualAlloc, the newBuffer AND the memset. freeAllocation only runs
+    // after the command buffer retires, so a pooled buffer is already GPU-idle
+    // (the same invariant the arena relies on). Disable with D9MT_BUFPOOL=0.
+    class D9MTDedicatedPool {
+
+    public:
+
+      struct Entry {
+        obj_handle_t buffer  = 0;
+        void*        mem     = nullptr;
+        uint64_t     gpuAddr = 0;
+        VkDeviceSize cap     = 0;   // aligned VirtualAlloc size of the buffer
+      };
+
+      // Aligned capacity a request of `size` needs — matches the dedicated path.
+      static VkDeviceSize capFor(VkDeviceSize size) {
+        return align(std::max<VkDeviceSize>(size, 1u), D9MTBufferAlignment);
+      }
+
+      // Hands back a pooled buffer whose capacity exactly fits `size`, or false.
+      bool acquire(VkDeviceSize size, Entry& out) {
+        if (!m_enabled)
+          return false;
+        VkDeviceSize cap = capFor(size);
+        std::lock_guard<dxvk::mutex> lock(m_mutex);
+        auto it = m_free.find(cap);
+        if (it == m_free.end() || it->second.empty())
+          return false;
+        out = it->second.back();
+        it->second.pop_back();
+        return true;
+      }
+
+      // Takes a freed dedicated buffer into the pool. Returns false (pool off or
+      // bucket full) -> caller must release the buffer + memory as normal.
+      bool recycle(const Entry& e) {
+        if (!m_enabled || !e.buffer)
+          return false;
+        std::lock_guard<dxvk::mutex> lock(m_mutex);
+        auto& bucket = m_free[e.cap];
+        if (bucket.size() >= MaxPerClass)
+          return false;
+        bucket.push_back(e);
+        return true;
+      }
+
+    private:
+
+      static constexpr size_t MaxPerClass = 32;   // bound retained buffers/size
+
+      static bool readEnabled() {
+        const char* v = std::getenv("D9MT_BUFPOOL");
+        return !(v && v[0] == '0' && v[1] == '\0');
+      }
+
+      const bool                                           m_enabled = readEnabled();
+      dxvk::mutex                                           m_mutex;
+      std::unordered_map<VkDeviceSize, std::vector<Entry>>  m_free;
+
+    };
+
+    D9MTDedicatedPool g_dedicatedPool;
+
   }
 
 
@@ -707,6 +776,30 @@ namespace dxvk {
       allocation->m_buffer         = VkBuffer(slice.buffer);
       allocation->m_bufferOffset   = slice.offset;
       allocation->m_bufferAddress  = slice.gpuAddr;
+      return allocation;
+    }
+
+    // Recycle a pooled dedicated buffer if one of the exact aligned size is
+    // free — skips VirtualAlloc + MTLDevice_newBuffer + the pre-fault memset.
+    if (D9MTDedicatedPool::Entry pooled; g_dedicatedPool.acquire(createInfo.size, pooled)) {
+      DxvkMemoryType* type = d9mtFindMemoryType(m_memTypes, m_memTypeCount,
+        allocationInfo.properties);
+
+      std::lock_guard<dxvk::mutex> lock(m_mutex);
+
+      DxvkResourceAllocation* allocation = m_allocationPool.create(this, type);
+      allocation->m_flags.set(DxvkAllocationFlag::OwnsBuffer);
+      allocation->m_flags.set(DxvkAllocationFlag::OwnsMemory);
+      allocation->m_resourceCookie = allocationInfo.resourceCookie;
+      allocation->m_size           = createInfo.size;
+      allocation->m_mapPtr         = pooled.mem;
+      allocation->m_buffer         = VkBuffer(pooled.buffer);
+      allocation->m_bufferOffset   = 0u;
+      allocation->m_bufferAddress  = pooled.gpuAddr;
+
+      // Re-account like a fresh dedicated alloc; the matching free decrements.
+      type->stats.memoryAllocated += pooled.cap;
+      type->stats.memoryUsed      += pooled.cap;
       return allocation;
     }
 
@@ -968,6 +1061,24 @@ namespace dxvk {
       g_bufferArena.free(allocation->m_size, slice);
     }
 
+    // Dedicated-buffer recycle (mirrors the slice path above): hand whole
+    // OwnsBuffer/OwnsMemory dedicated buffers to the size-keyed pool instead of
+    // releasing them, so createBufferResource can reuse one and skip the
+    // VirtualAlloc + newBuffer + memset. Post-retirement here, so GPU-idle.
+    bool recycledDedicated = false;
+    if (allocation->m_buffer
+     && allocation->m_flags.test(DxvkAllocationFlag::OwnsBuffer)
+     && allocation->m_flags.test(DxvkAllocationFlag::OwnsMemory)
+     && !allocation->m_flags.test(DxvkAllocationFlag::Imported)
+     && allocation->m_mapPtr) {
+      D9MTDedicatedPool::Entry e;
+      e.buffer  = obj_handle_t(allocation->m_buffer);
+      e.mem     = allocation->m_mapPtr;
+      e.gpuAddr = allocation->m_bufferAddress;
+      e.cap     = D9MTDedicatedPool::capFor(allocation->m_size);
+      recycledDedicated = g_dedicatedPool.recycle(e);
+    }
+
     std::lock_guard<dxvk::mutex> lock(m_mutex);
 
     if (allocation->m_flags.test(DxvkAllocationFlag::OwnsMemory) && allocation->m_type) {
@@ -978,6 +1089,14 @@ namespace dxvk {
 
       allocation->m_type->stats.memoryAllocated -= size;
       allocation->m_type->stats.memoryUsed      -= size;
+    }
+
+    // Pooled: keep the handle + memory alive for reuse. Drop the Owns* flags so
+    // ~DxvkResourceAllocation skips NSObject_release + VirtualFree (it still
+    // frees any buffer views, exactly like the suballocated-slice path).
+    if (recycledDedicated) {
+      allocation->m_flags.clr(DxvkAllocationFlag::OwnsBuffer);
+      allocation->m_flags.clr(DxvkAllocationFlag::OwnsMemory);
     }
 
     m_allocationPool.free(allocation);

@@ -107,6 +107,60 @@ namespace dxvk::d9mt {
     None, Render, Blit, Compute
   };
 
+  // Open-addressing (linear-probe) set of Metal resource handles, used for
+  // per-encoder residency dedup. Replaces std::unordered_set, which allocated a
+  // node per insert and freed them all on clear — markResident runs for every
+  // bound resource of every draw, so that churn was a real chunk of draw CPU.
+  // This keeps a flat power-of-two table: add() is an integer probe, reset()
+  // just zero-fills and keeps the capacity (no realloc between passes). Handle 0
+  // is the empty sentinel (markResident never adds a null resource).
+  struct ResidentSet {
+    std::vector<obj_handle_t> slots;   // power-of-two, 0 = empty slot
+    size_t mask  = 0;
+    size_t count = 0;
+
+    static uint64_t mix(uint64_t h) {  // fibonacci hash + avalanche
+      h *= 0x9E3779B97F4A7C15ull;
+      return h ^ (h >> 29);
+    }
+
+    void reset() {                     // per-encoder clear, keeps capacity
+      if (count) {
+        std::fill(slots.begin(), slots.end(), obj_handle_t(0));
+        count = 0;
+      }
+    }
+
+    void grow() {
+      const size_t newCap = slots.empty() ? 256u : slots.size() * 2u;
+      std::vector<obj_handle_t> old(newCap, obj_handle_t(0));
+      slots.swap(old);
+      mask  = newCap - 1u;
+      count = 0;
+      for (obj_handle_t h : old) {
+        if (!h) continue;
+        size_t i = mix(h) & mask;
+        while (slots[i]) i = (i + 1u) & mask;
+        slots[i] = h;
+        count++;
+      }
+    }
+
+    // Returns true if newly added (was not already resident this encoder).
+    bool add(obj_handle_t h) {
+      if (slots.empty() || (count + 1u) * 4u >= slots.size() * 3u)
+        grow();
+      size_t i = mix(h) & mask;
+      while (slots[i]) {
+        if (slots[i] == h) return false;
+        i = (i + 1u) & mask;
+      }
+      slots[i] = h;
+      count++;
+      return true;
+    }
+  };
+
   struct CmdListState {
     obj_handle_t cmdbuf  = 0;                 // retained
     obj_handle_t encoder = 0;                 // retained while open
@@ -120,11 +174,11 @@ namespace dxvk::d9mt {
     // render pass starts on this list
     obj_handle_t lastRenderPso  = 0;
     obj_handle_t lastRenderDsso = 0;
-    // resources already made resident on the current render encoder. Hash set,
-    // not a vector: markResident is called for every bound resource of every
-    // draw, so an O(n) membership scan was O(n^2) over a pass (hundreds of
-    // resident resources) — a measurable chunk of draw-call CPU.
-    std::unordered_set<obj_handle_t> renderResident;
+    // resources already made resident on the current render encoder. Flat
+    // open-addressing set (see ResidentSet): markResident is called for every
+    // bound resource of every draw, so the per-insert node allocation of a
+    // std::unordered_set was a measurable chunk of draw-call CPU.
+    ResidentSet renderResident;
 
     // visibility-result state (occlusion queries): one pooled shared-storage
     // MTLBuffer per submission that counts samples; slots are bump-allocated
@@ -593,7 +647,7 @@ namespace dxvk::d9mt {
     if (!resource)
       return;
 
-    if (!state.renderResident.insert(resource).second)
+    if (!state.renderResident.add(resource))
       return; // already resident on this encoder
 
     wmtcmd_render_useresource cmd = { };
@@ -4541,7 +4595,7 @@ namespace dxvk {
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
     cstate.lastRenderPso  = 0;
     cstate.lastRenderDsso = 0;
-    cstate.renderResident.clear();
+    cstate.renderResident.reset();
 
     // restart active occlusion queries into a fresh visibility slot of the
     // new encoder (queries span pass splits by accumulating GPU queries)
@@ -4643,6 +4697,7 @@ namespace dxvk {
   // ----------------------------------------------------------------------
 
   void DxvkContext::updateVertexBufferBindings() {
+    D9MT_ZONE(d9mt::ZoneVtxBind);
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
 
     for (uint32_t i = 0; i < m_state.gp.state.il.bindingCount(); i++) {
@@ -4688,6 +4743,7 @@ namespace dxvk {
   // ----------------------------------------------------------------------
 
   void DxvkContext::updateDynamicState() {
+    D9MT_ZONE(d9mt::ZoneDynState);
     auto& dstate = d9mt::ctxDrawStateImpl(this);
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
 
@@ -5091,6 +5147,7 @@ namespace dxvk {
     if (!this->commitGraphicsState<false, false>())
       return;
 
+    D9MT_ZONE(d9mt::ZoneDrawEmit);
     auto& dstate = d9mt::ctxDrawStateImpl(this);
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
 
@@ -5169,6 +5226,7 @@ namespace dxvk {
     if (!this->commitGraphicsState<true, false>())
       return;
 
+    D9MT_ZONE(d9mt::ZoneDrawEmit);
     if (!m_state.vi.indexBuffer.defined()) {
       static bool s_warned = false;
       if (!std::exchange(s_warned, true))
