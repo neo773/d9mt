@@ -22,7 +22,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
+
+// TRACY=1 build: bridge the existing D9MT_ZONE scopes into Tracy so the same
+// zones show up live in the Tracy GUI (in addition to the d3d9fe-trace.log
+// dump). On-demand client -> near-zero cost until the GUI connects.
+#ifdef TRACY_ENABLE
+#include <tracy/TracyC.h>
+#endif
 
 namespace dxvk::d9mt {
 
@@ -38,6 +46,9 @@ namespace dxvk::d9mt {
     ZoneFlush,           // flushCommandList (commit)
     ZonePresent,         // presentImage
     ZoneBindRes,         // updateGraphicsShaderResources (per-draw AB/push/resident rebuild)
+    ZoneVtxBind,         // updateVertexBufferBindings (per-stream setbuffer)
+    ZoneDynState,        // updateDynamicState (viewport/scissor/raster)
+    ZoneDrawEmit,        // post-commit draw emission (trifan idx-gen + draw cmd)
     ZoneCount
   };
 
@@ -45,6 +56,7 @@ namespace dxvk::d9mt {
     static const char* const names[ZoneCount] = {
       "draw", "drawIdx", "psoLook", "psoMake", "shdComp",
       "startRP", "bufSub", "bufDed", "flush", "present", "bindRes",
+      "vtxBind", "dynState", "drawEmit",
     };
     return z < ZoneCount ? names[z] : "?";
   }
@@ -92,16 +104,40 @@ namespace dxvk::d9mt {
         cur, dt, std::memory_order_relaxed)) { }
   }
 
+#ifdef TRACY_ENABLE
+  // One static Tracy source-location per zone (built once) — avoids the
+  // per-call malloc of ___tracy_alloc_srcloc on the ~12k-zone/frame hot path.
+  inline const ___tracy_source_location_data* zoneSrcLoc(uint32_t z) {
+    static ___tracy_source_location_data locs[ZoneCount];
+    static const bool init = [] {
+      for (uint32_t i = 0; i < ZoneCount; i++)
+        locs[i] = ___tracy_source_location_data{ zoneName(i), "d9mt-zone", "d9mt", 0, 0 };
+      return true;
+    }();
+    (void) init;
+    return &locs[z < ZoneCount ? z : 0];
+  }
+#endif
+
   // RAII scope: reads the clock only when tracing is on.
   struct ScopedZone {
     uint32_t z;
     uint64_t start;
     bool     on;
+#ifdef TRACY_ENABLE
+    TracyCZoneCtx tracy;
+#endif
     explicit ScopedZone(uint32_t zone) : z(zone), start(0), on(traceEnabled()) {
       if (on) start = qpcNow();
+#ifdef TRACY_ENABLE
+      tracy = ___tracy_emit_zone_begin(zoneSrcLoc(zone), 1);
+#endif
     }
     ~ScopedZone() {
       if (on) zoneRecord(z, qpcNow() - start);
+#ifdef TRACY_ENABLE
+      ___tracy_emit_zone_end(tracy);
+#endif
     }
     ScopedZone(const ScopedZone&) = delete;
     ScopedZone& operator=(const ScopedZone&) = delete;
@@ -122,6 +158,9 @@ namespace dxvk::d9mt {
   // Called once per present: stamps frame wall time, dumps a per-zone line,
   // resets the accumulators. One line per frame in d3d9fe-trace.log.
   inline void traceFrameEnd() {
+#ifdef TRACY_ENABLE
+    TracyCFrameMark;
+#endif
 #ifdef D9MT_NO_TRACE
     return;
 #else

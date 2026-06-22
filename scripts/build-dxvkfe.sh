@@ -19,6 +19,10 @@ GEN="$BUILD/dxvkfe-gen"
 # keeps the dev (-O2, traced) and release object trees from clashing — flags
 # only take effect on a recompile, and mtime caching can't see a flag change.
 RELEASE="${RELEASE:-0}"
+TRACY="${TRACY:-0}"
+TRACY_FLAGS=()
+TRACY_SRC=()
+TRACY_LIBS=()
 if [[ "$RELEASE" == 1 ]]; then
   OBJ="$BUILD/dxvkfe-obj-release"
   # -flto is omitted: mingw's DLL auto-export chokes on LTO'd std::regex
@@ -28,6 +32,21 @@ if [[ "$RELEASE" == 1 ]]; then
              -DNDEBUG -DD9MT_NO_TRACE -DD9MT_NO_LOG)
   LINK_OPT=(-O3)
   echo "[dxvkfe] RELEASE build — max speed (-O3, no trace, no logging)"
+elif [[ "$TRACY" == 1 ]]; then
+  # TRACY=1 -> Tracy frame profiler client compiled in. Manual ZoneScoped
+  # zones only (sampling / callstack / system tracing disabled — those need
+  # host facilities Wine doesn't expose). ON_DEMAND: zero cost until the Tracy
+  # GUI connects, so the dll is safe to leave deployed. Own object cache.
+  OBJ="$BUILD/dxvkfe-obj-tracy"
+  OPT_FLAGS=(-O2)
+  LINK_OPT=()
+  TRACY_FLAGS=(-DTRACY_ENABLE -DTRACY_ON_DEMAND -DTRACY_DELAYED_INIT
+               -DTRACY_NO_SAMPLING -DTRACY_NO_CALLSTACK
+               -DTRACY_NO_SYSTEM_TRACING -DTRACY_NO_CONTEXT_SWITCH
+               -DTRACY_NO_VSYNC_CAPTURE -DTRACY_NO_CRASH_HANDLER)
+  TRACY_SRC=("$ROOT/vendor/tracy/public/TracyClient.cpp")
+  TRACY_LIBS=(-lws2_32 -ldbghelp)
+  echo "[dxvkfe] TRACY build — Tracy client (on-demand, manual zones)"
 else
   OBJ="$BUILD/dxvkfe-obj"
   OPT_FLAGS=(-O2)
@@ -40,7 +59,7 @@ CC=i686-w64-mingw32-gcc
 
 # Flags per docs/BACKEND-SURFACE.md §6.4 (mirrors upstream meson.build)
 COMMON_FLAGS=(
-  "${OPT_FLAGS[@]}" -w
+  "${OPT_FLAGS[@]}" ${TRACY_FLAGS[@]+"${TRACY_FLAGS[@]}"} -w
   -msse -msse2 -msse3 -mfpmath=sse -mpreferred-stack-boundary=2
   -ffunction-sections -fdata-sections
   -DNOMINMAX -D_WIN32_WINNT=0xa00 -DDXVK_WSI_WIN32
@@ -49,6 +68,7 @@ COMMON_FLAGS=(
   -I "$V/src/dxvk"
   -I "$V/include/vulkan/include"
   -I "$V/include/spirv/include"
+  -I "$ROOT/vendor/tracy/public"
 )
 CXXFLAGS=(-std=c++17 "${COMMON_FLAGS[@]}")
 CFLAGS=("${COMMON_FLAGS[@]}")
@@ -148,6 +168,10 @@ CPP_SOURCES+=(
 # our Metal backend + remaining stub layer (everything in src/d3d9fe)
 for f in "$ROOT"/src/d3d9fe/*.cpp; do CPP_SOURCES+=("$f"); done
 
+# Tracy client (TRACY=1 only): one big amalgamated TU. Compiles to nothing
+# when TRACY_ENABLE is undefined, but we only add it in the TRACY build.
+CPP_SOURCES+=(${TRACY_SRC[@]+"${TRACY_SRC[@]}"})
+
 C_SOURCES=(
   "$V/src/util/sha1/sha1.c"
 )
@@ -165,12 +189,14 @@ FAILED=0
 NJOBS=8
 BACKEND_HDR="$ROOT/src/d3d9fe/d9mt_backend.h"
 DRAW_HDR="$ROOT/src/d3d9fe/d9mt_draw.h"
+TRACE_HDR="$ROOT/src/d3d9fe/d9mt_trace.h"
 compile_one() { # <src> <compiler...>
   local src="$1"; shift
   local obj; obj="$(objname "$src")"
   # backend TUs additionally depend on the shared backend headers
   if [[ "$src" == "$ROOT/src/d3d9fe/"* && -f "$obj" \
-     && ( "$BACKEND_HDR" -nt "$obj" || "$DRAW_HDR" -nt "$obj" ) ]]; then
+     && ( "$BACKEND_HDR" -nt "$obj" || "$DRAW_HDR" -nt "$obj" \
+          || "$TRACE_HDR" -nt "$obj" ) ]]; then
     rm -f "$obj"
   fi
   if [[ ! -f "$obj" || "$src" -nt "$obj" ]]; then
@@ -213,6 +239,7 @@ echo "[dxvkfe] linking d3d9fe.dll"
   -L "$ROOT/prebuilt" -lwinemetal \
   -L "$BUILD/d9mtmetal" -ld9mtmetal32 \
   -luser32 -lgdi32 -lsetupapi -luuid \
+  ${TRACY_LIBS[@]+"${TRACY_LIBS[@]}"} \
   2> "$BUILD/dxvkfe-link.log"
 LINK_RC=$?
 if (( LINK_RC != 0 )); then
