@@ -34,6 +34,10 @@ namespace dxvk::d9mt {
     uint16_t          abId;
     VkDescriptorType  type;
     bool              isUniformBuffer; // raw buffer (VA word), not a view
+    // For UNIFORM_BUFFER refs marked dynamic via SPIRV-Cross add_dynamic_buffer:
+    // the AB slot holds the buffer BASE; the per-draw byte offset is written to
+    // spvDynamicOffsets[dynIndex]. 0xFFFF = not dynamic.
+    uint16_t          dynIndex = 0xFFFFu;
   };
 
   // One sampler binding: heap index goes into the push block at blockOffset
@@ -68,6 +72,14 @@ namespace dxvk::d9mt {
     int32_t  pushBufferIndex  = -1;  // [[buffer(N)]] of the push block
     int32_t  samplerHeapIndex = -1;  // [[buffer(N)]] of the set-15 heap
     uint32_t pushDataSize     = 0;   // bytes to upload (max member end)
+
+    // Dynamic-uniform-buffer offset support (SPIRV-Cross add_dynamic_buffer):
+    // the set-0 AB holds stable buffer bases; the per-draw byte offsets live in
+    // the spvDynamicOffsets buffer at [[buffer(dynOffsetBufferIndex)]], one u32
+    // per dynamic buffer (dynBufferCount total). Lets the AB stay identical
+    // across transform-only draws so the AB rebuild can be skipped.
+    int32_t  dynOffsetBufferIndex = -1;  // [[buffer(N)]] of spvDynamicOffsets, or -1
+    uint32_t dynBufferCount       = 0;   // number of dynamic uniform buffers
 
     std::vector<ShaderResourceRef>  resources;
     std::vector<ShaderSamplerRef>   samplers;

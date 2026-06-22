@@ -17,6 +17,7 @@
 // All caches are process-global and hold Rc<DxvkShader> refs for the process
 // lifetime (upstream's pipeline manager has the same lifetime policy).
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

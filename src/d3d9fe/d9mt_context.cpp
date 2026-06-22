@@ -180,6 +180,24 @@ namespace dxvk::d9mt {
     // std::unordered_set was a measurable chunk of draw-call CPU.
     ResidentSet renderResident;
 
+    // COUNT-only (D9MT_TRACE): hash of the last set-0 argument buffer words per
+    // stage (0=vertex, 1=fragment), to classify AB builds as real-rebuild vs
+    // identical-to-last (would-be-skipped). Reset on pass restart.
+    uint64_t lastAbHash[2] = { 0, 0 };
+
+    // AB stability cache (per stage 0=vertex,1=fragment): with dynamic-offset
+    // constant buffers the AB words hold stable buffer BASES, so the AB is
+    // identical across same-material/transform-only draws. Cache the built words
+    // keyed by the shader pointer (auto-invalidates on PSO/shader change); when
+    // the shader matches, the AB word count matches, and neither views nor
+    // samplers are dirty, the rebuilt base words are compared to the cache and
+    // the whole AB alloc+texture-loop+setbuffer is skipped on a match. Reset on
+    // pass restart (encoder bindings + residency are dropped there).
+    const void*           abCacheShader[2] = { nullptr, nullptr };
+    uint32_t              abCacheCount[2]  = { 0, 0 };
+    std::vector<uint64_t> abCacheWords[2];
+    std::vector<const void*> abCacheViews[2];  // diagnostic: last-built bound view ptrs
+
     // visibility-result state (occlusion queries): one pooled shared-storage
     // MTLBuffer per submission that counts samples; slots are bump-allocated
     // (one per GPU query, new GPU query per encoder restart while active)
@@ -4596,6 +4614,14 @@ namespace dxvk {
     cstate.lastRenderPso  = 0;
     cstate.lastRenderDsso = 0;
     cstate.renderResident.reset();
+    cstate.lastAbHash[0] = 0;   // count-only AB-classification state (see CmdListState)
+    cstate.lastAbHash[1] = 0;
+    cstate.abCacheShader[0] = nullptr;   // AB stability cache invalidated on pass restart
+    cstate.abCacheShader[1] = nullptr;
+    cstate.abCacheCount[0] = 0;
+    cstate.abCacheCount[1] = 0;
+    cstate.abCacheViews[0].clear();
+    cstate.abCacheViews[1].clear();
 
     // restart active occlusion queries into a fresh visibility slot of the
     // new encoder (queries span pass splits by accumulating GPU queries)
@@ -4892,14 +4918,54 @@ namespace dxvk {
     const bool resDirty  = m_descriptorState.hasDirtyResources(VK_SHADER_STAGE_ALL_GRAPHICS);
     const bool pushDirty = m_flags.test(DxvkContextFlag::DirtyPushData);
 
+    // COUNT-only classifier: this bindRes call does no AB work (push block only).
+    if (!resDirty)
+      d9mt::zoneBump(d9mt::ZonePushOnly);
+
     for (uint32_t stage = 0; stage < 2u; stage++) {
       const d9mt::CompiledShader* shader = stage ? pso->fs : pso->vs;
       WMTRenderCommandType setBufferType = stage
         ? WMTRenderCommandSetFragmentBuffer
         : WMTRenderCommandSetVertexBuffer;
 
-      // ---- set-0 argument buffer
+      // ---- set-0 argument buffer (textures + per-draw constant-buffer addrs)
       if (resDirty && shader->abEntryCount) {
+        const VkShaderStageFlags stageFlag = stage
+          ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
+
+        // COPY-PATCH: the only AB slot that moves on a transform-only draw is the
+        // constant buffer (its ring address advances every draw); the texture
+        // slots are unchanged. If the shader + entry count match the cache,
+        // samplers are clean, and the bound texture VIEWS are pointer-identical
+        // to the cached set (cheap compare, no getDescriptor — this also catches
+        // "SetTexture re-bound the same texture, dirty bit lying"), reuse the
+        // cached AB words and rewrite ONLY the uniform-buffer slots, skipping the
+        // texture-descriptor loop + texture residency. Textures stay resident for
+        // the encoder (the building draw marked them; renderResident isn't reset
+        // until pass restart, where the cache is also invalidated). The AB still
+        // re-emits each draw (its cbuffer slot moved) but is built far cheaper.
+        // Strictly <= the full rebuild's work -> cannot regress.
+        bool canPatch =
+             cstate.abCacheShader[stage] == shader
+          && cstate.abCacheCount[stage]  == shader->abEntryCount
+          && cstate.abCacheWords[stage].size() == shader->abEntryCount
+          && !m_descriptorState.hasDirtySamplers(stageFlag);
+
+        if (canPatch) {
+          size_t vi = 0;
+          for (const auto& ref : shader->resources) {
+            if (ref.type != VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+             && ref.type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+              continue;
+            const void* v = m_resources[ref.slot].imageView.ptr();
+            if (vi >= cstate.abCacheViews[stage].size()
+             || cstate.abCacheViews[stage][vi] != v) { canPatch = false; break; }
+            vi++;
+          }
+          if (canPatch && vi != cstate.abCacheViews[stage].size())
+            canPatch = false; // bound-view count changed
+        }
+
         DxvkBufferSlice slice = dstate.ring->alloc(
           VkDeviceSize(shader->abEntryCount) * 8u);
 
@@ -4908,61 +4974,101 @@ namespace dxvk {
           Logger::err("d9mt: argument buffer allocation failed");
           return false;
         }
-        std::memset(ab, 0, size_t(shader->abEntryCount) * 8u);
 
-        for (const auto& ref : shader->resources) {
-          if (ref.abId >= shader->abEntryCount)
-            continue; // defensive: never write outside the allocation
+        if (canPatch) {
+          // reuse cached texture words; rewrite only the moving cbuffer slots
+          std::memcpy(ab, cstate.abCacheWords[stage].data(),
+            size_t(shader->abEntryCount) * 8u);
 
-          switch (ref.type) {
-            case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: {
-              if (!ref.isUniformBuffer) {
-                static bool s_warned = false;
-                if (!std::exchange(s_warned, true))
-                  Logger::err("d9mt: storage-buffer-view binding not implemented (SWVP)");
-                break;
-              }
-
-              const auto& buffer = m_uniformBuffers[ref.slot];
-              if (!buffer.defined())
-                break; // nullDescriptor: word stays 0
-
+          for (const auto& ref : shader->resources) {
+            if (ref.abId >= shader->abEntryCount || !ref.isUniformBuffer
+             || (ref.type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+              && ref.type != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER))
+              continue;
+            const auto& buffer = m_uniformBuffers[ref.slot];
+            uint64_t addr = 0;
+            if (buffer.defined()) {
               auto info = buffer.getSliceInfo();
-              ab[ref.abId] = info.gpuAddress;
-
+              addr = info.gpuAddress;
               d9mt::markResident(cstate, obj_handle_t(info.buffer));
               m_cmd->track(buffer.buffer(), DxvkAccess::Read);
-            } break;
-
-            case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-            case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: {
-              const auto& view = m_resources[ref.slot].imageView;
-              if (view == nullptr)
-                break; // nullDescriptor
-
-              const DxvkDescriptor* descriptor = view->getDescriptor();
-              if (!descriptor || !descriptor->legacy.image.imageView)
-                break;
-
-              uint64_t word;
-              std::memcpy(&word, descriptor->descriptor.data(), sizeof(word));
-              ab[ref.abId] = word;
-
-              d9mt::markResident(cstate,
-                obj_handle_t(descriptor->legacy.image.imageView));
-              m_cmd->track(view->image(),
-                ref.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
-                  ? DxvkAccess::Write : DxvkAccess::Read);
-            } break;
-
-            default: {
-              static bool s_warned = false;
-              if (!std::exchange(s_warned, true))
-                Logger::err(str::format("d9mt: unsupported draw descriptor type ",
-                  uint32_t(ref.type)));
-            } break;
+            }
+            ab[ref.abId] = addr;
+            cstate.abCacheWords[stage][ref.abId] = addr; // keep cache current
           }
+
+          d9mt::zoneBump(d9mt::ZoneAbIdentical);
+        } else {
+          std::memset(ab, 0, size_t(shader->abEntryCount) * 8u);
+
+          for (const auto& ref : shader->resources) {
+            if (ref.abId >= shader->abEntryCount)
+              continue; // defensive: never write outside the allocation
+
+            switch (ref.type) {
+              case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+              case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: {
+                if (!ref.isUniformBuffer) {
+                  static bool s_warned = false;
+                  if (!std::exchange(s_warned, true))
+                    Logger::err("d9mt: storage-buffer-view binding not implemented (SWVP)");
+                  break;
+                }
+
+                const auto& buffer = m_uniformBuffers[ref.slot];
+                if (!buffer.defined())
+                  break; // nullDescriptor: word stays 0
+
+                auto info = buffer.getSliceInfo();
+                ab[ref.abId] = info.gpuAddress;
+
+                d9mt::markResident(cstate, obj_handle_t(info.buffer));
+                m_cmd->track(buffer.buffer(), DxvkAccess::Read);
+              } break;
+
+              case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+              case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: {
+                const auto& view = m_resources[ref.slot].imageView;
+                if (view == nullptr)
+                  break; // nullDescriptor
+
+                const DxvkDescriptor* descriptor = view->getDescriptor();
+                if (!descriptor || !descriptor->legacy.image.imageView)
+                  break;
+
+                uint64_t word;
+                std::memcpy(&word, descriptor->descriptor.data(), sizeof(word));
+                ab[ref.abId] = word;
+
+                d9mt::markResident(cstate,
+                  obj_handle_t(descriptor->legacy.image.imageView));
+                m_cmd->track(view->image(),
+                  ref.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                    ? DxvkAccess::Write : DxvkAccess::Read);
+              } break;
+
+              default: {
+                static bool s_warned = false;
+                if (!std::exchange(s_warned, true))
+                  Logger::err(str::format("d9mt: unsupported draw descriptor type ",
+                    uint32_t(ref.type)));
+              } break;
+            }
+          }
+
+          // refresh the copy-patch cache: the built words + the bound view
+          // pointers in the same iteration order used by the compare above.
+          cstate.abCacheShader[stage] = shader;
+          cstate.abCacheCount[stage]  = shader->abEntryCount;
+          cstate.abCacheWords[stage].assign(ab, ab + shader->abEntryCount);
+          cstate.abCacheViews[stage].clear();
+          for (const auto& ref : shader->resources) {
+            if (ref.type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+             || ref.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+              cstate.abCacheViews[stage].push_back(m_resources[ref.slot].imageView.ptr());
+          }
+
+          d9mt::zoneBump(d9mt::ZoneAbRebuild);
         }
 
         auto sliceInfo = slice.getSliceInfo();

@@ -49,6 +49,13 @@ namespace dxvk::d9mt {
     ZoneVtxBind,         // updateVertexBufferBindings (per-stream setbuffer)
     ZoneDynState,        // updateDynamicState (viewport/scissor/raster)
     ZoneDrawEmit,        // post-commit draw emission (trifan idx-gen + draw cmd)
+    ZoneAbRebuild,       // COUNT-only: AB built, words differ from last (real rebuild)
+    ZoneAbIdentical,     // COUNT-only: AB built, words identical to last (skippable)
+    ZonePushOnly,        // COUNT-only: bindRes call with no AB work (resDirty=false)
+    ZoneShMiss,          // COUNT-only: AB rebuild reason = shader/PSO changed
+    ZoneVSpurious,       // COUNT-only: views dirty but bound view handles UNCHANGED
+    ZoneVReal,           // COUNT-only: views dirty AND bound view handles changed
+    ZoneBaseMv,          // COUNT-only: views clean but base words moved (ring wrap etc)
     ZoneCount
   };
 
@@ -56,7 +63,8 @@ namespace dxvk::d9mt {
     static const char* const names[ZoneCount] = {
       "draw", "drawIdx", "psoLook", "psoMake", "shdComp",
       "startRP", "bufSub", "bufDed", "flush", "present", "bindRes",
-      "vtxBind", "dynState", "drawEmit",
+      "vtxBind", "dynState", "drawEmit", "abRbld", "abIdent", "pushOnly",
+      "shMiss", "vSame", "vDiff", "baseMv",
     };
     return z < ZoneCount ? names[z] : "?";
   }
@@ -102,6 +110,13 @@ namespace dxvk::d9mt {
     uint64_t cur = a.maxTicks.load(std::memory_order_relaxed);
     while (dt > cur && !a.maxTicks.compare_exchange_weak(
         cur, dt, std::memory_order_relaxed)) { }
+  }
+
+  // Count-only bump (no timing) for classification counters that ride the same
+  // per-frame trace dump. No-op unless D9MT_TRACE is on.
+  inline void zoneBump(uint32_t z) {
+    if (traceEnabled())
+      zoneRecord(z, 0);
   }
 
 #ifdef TRACY_ENABLE

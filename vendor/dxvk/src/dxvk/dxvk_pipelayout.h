@@ -136,6 +136,10 @@ namespace dxvk {
       return bool(m_dirtyMask & computeMask(stages, DxvkDescriptorClass::Sampler));
     }
 
+    bool hasDirtyViews(VkShaderStageFlags stages) {
+      return bool(m_dirtyMask & computeMask(stages, DxvkDescriptorClass::View));
+    }
+
     bool hasDirtyVas(VkShaderStageFlags stages) {
       return bool(m_dirtyMask & computeMask(stages, DxvkDescriptorClass::Va));
     }
