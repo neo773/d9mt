@@ -1525,6 +1525,15 @@ namespace dxvk::d9mt {
     uint32_t            activeOcclusionCount = 0u;
 
     const PsoEntry*     pso = nullptr;
+
+    // Single-entry memo for the render-PSO lookup. Consecutive draws very often
+    // resolve to the same pipeline, so cache the last key + result and skip the
+    // full-state FNV hash + s_psoMutex + unordered_map probe in getRenderPso on
+    // a match. Purely a lookup-cost optimization: the resolved entry is byte-for-
+    // byte what a fresh lookup would return, so this changes timing only, never
+    // observable behavior (downstream dirty/AB logic is unaffected).
+    PsoKey              lastPsoKey = { };
+    const PsoEntry*     lastPsoEntry = nullptr;
   };
 
   namespace {
@@ -4675,7 +4684,20 @@ namespace dxvk {
       key.state.ilBindings[i].setStride(m_state.vi.vertexStrides[binding]);
     }
 
-    const d9mt::PsoEntry* entry = d9mt::getRenderPso(key, vs, fs);
+    // Memo hit: same key as the previous draw → reuse the resolved entry and
+    // skip the hash + mutex + map probe. entry->pso is atomic, so a still-
+    // compiling entry memoed here is re-checked below and picked up once ready.
+    const d9mt::PsoEntry* entry;
+    if (dstate.lastPsoEntry && key == dstate.lastPsoKey) {
+      entry = dstate.lastPsoEntry;
+    } else {
+      entry = d9mt::getRenderPso(key, vs, fs);
+      if (entry) {
+        dstate.lastPsoKey   = key;
+        dstate.lastPsoEntry = entry;
+      }
+    }
+
     if (!entry || !entry->pso)
       return false; // creation failure already logged once
 
