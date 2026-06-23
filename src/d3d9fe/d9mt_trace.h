@@ -13,6 +13,8 @@
 // skips the clock read — negligible overhead, safe to leave compiled in.
 //
 // Enable: D9MT_TRACE=1   Output: d3d9fe-trace.log in the process cwd.
+// Limit which zones are timed (less observer overhead): D9MT_TRACE_ZONES=<mask>,
+// a hex/dec bitmask where bit i selects D9MTZone i. Unset = all zones.
 
 #pragma once
 
@@ -49,6 +51,9 @@ namespace dxvk::d9mt {
     ZoneVtxBind,         // updateVertexBufferBindings (per-stream setbuffer)
     ZoneDynState,        // updateDynamicState (viewport/scissor/raster)
     ZoneDrawEmit,        // post-commit draw emission (trifan idx-gen + draw cmd)
+    ZonePsoState,        // updateGraphicsPipelineState whole (key build + lookup)
+    ZoneIdxBind,         // updateIndexBufferBinding
+    ZoneCommit,          // commitGraphicsState whole (glue = this minus substages)
     ZoneCount
   };
 
@@ -56,7 +61,7 @@ namespace dxvk::d9mt {
     static const char* const names[ZoneCount] = {
       "draw", "drawIdx", "psoLook", "psoMake", "shdComp",
       "startRP", "bufSub", "bufDed", "flush", "present", "bindRes",
-      "vtxBind", "dynState", "drawEmit",
+      "vtxBind", "dynState", "drawEmit", "psoState", "idxBind", "commit",
     };
     return z < ZoneCount ? names[z] : "?";
   }
@@ -67,6 +72,23 @@ namespace dxvk::d9mt {
       return v && v[0] == '1' && v[1] == '\0';
     }();
     return e;
+  }
+
+  // Per-zone enable mask. Timing every zone reads QPC twice per scope on the
+  // ~12k-zone/frame hot path, which is itself a measurable CPU/FPS hit and skews
+  // the numbers. D9MT_TRACE_ZONES=<bitmask> (hex/dec, bit i = D9MTZone i) limits
+  // timing to the zones of interest so unselected zones cost only a cached bool
+  // + bit test (no clock read). Unset => all zones (backward compatible).
+  // Example: only the per-draw substages bindRes|vtxBind|dynState|psoLook|
+  // drawEmit + draw|drawIdx => D9MT_TRACE_ZONES=0x3C07.
+  inline uint32_t traceZoneMask() {
+    static const uint32_t m = [] {
+      const char* v = std::getenv("D9MT_TRACE_ZONES");
+      if (!v || !v[0])
+        return ~0u;
+      return uint32_t(std::strtoul(v, nullptr, 0));
+    }();
+    return m;
   }
 
   inline uint64_t qpcFreq() {
@@ -119,6 +141,84 @@ namespace dxvk::d9mt {
   }
 #endif
 
+  // --------------------------------------------------------------------------
+  // Low-overhead micro-probe. The QPC ScopedZone calls QueryPerformanceCounter
+  // (a wine API call) twice per scope, which dwarfs and inflates a region as
+  // small as a mutex+map lookup. microNow() reads the CPU/virtual counter via
+  // rdtsc directly — under Rosetta that's a cheap emulated register read, no
+  // wine round-trip — so it can honestly time tiny hot blocks. Ticks are self-
+  // calibrated to ms each frame against the QPC frame delta in traceFrameEnd.
+  // Separate from the zone mask: gated only on D9MT_TRACE so you can disable all
+  // QPC zones (D9MT_TRACE_ZONES=0) and pay only rdtsc on the probed block.
+  // --------------------------------------------------------------------------
+  inline uint64_t microNow() {
+#if defined(__x86_64__) || defined(__i386__)
+    return __builtin_ia32_rdtsc();
+#else
+    return qpcNow();
+#endif
+  }
+
+  struct MicroAccum {
+    std::atomic<uint64_t> ticks { 0 };
+    std::atomic<uint64_t> count { 0 };
+  };
+
+  static constexpr uint32_t MicroCount = 20;
+
+  inline MicroAccum* microTable() {
+    static MicroAccum t[MicroCount] = {};
+    return t;
+  }
+
+  inline const char* microName(uint32_t i) {
+    static const char* const n[MicroCount] = {
+      "look", "ctxLk", "rt", "cmdLk", "rpRst", "spec", "psoSt",
+      "setPso", "vtx", "idx", "dyn", "bindRes",
+      "abAlloc", "abLoop", "abEnc", "push", "smpLoop", "pushEnc", "m18", "m19",
+    };
+    return i < MicroCount ? n[i] : "?";
+  }
+
+  inline void microAdd(uint32_t i, uint64_t dt) {
+    MicroAccum& a = microTable()[i];
+    a.ticks.fetch_add(dt, std::memory_order_relaxed);
+    a.count.fetch_add(1, std::memory_order_relaxed);
+  }
+
+  struct ScopedMicro {
+    uint32_t i;
+    uint64_t t0;
+    bool     on;
+    explicit ScopedMicro(uint32_t idx) : i(idx), t0(0), on(traceEnabled()) {
+      if (on) t0 = microNow();
+    }
+    ~ScopedMicro() {
+      if (on) {
+        MicroAccum& a = microTable()[i];
+        a.ticks.fetch_add(microNow() - t0, std::memory_order_relaxed);
+        a.count.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
+    ScopedMicro(const ScopedMicro&) = delete;
+    ScopedMicro& operator=(const ScopedMicro&) = delete;
+  };
+
+#ifdef D9MT_NO_TRACE
+  #define D9MT_MICRO(i) ((void) 0)
+  #define D9MT_MICRO_BEG(var) ((void) 0)
+  #define D9MT_MICRO_END(i, var) ((void) 0)
+#else
+  #define D9MT_MICRO(i) ::dxvk::d9mt::ScopedMicro \
+    D9MT_TRACE_CONCAT(d9mtMicro_, __LINE__)(i)
+  // Manual begin/end for line-by-line timing of regions that declare
+  // function-scope references (which can't live in a RAII sub-block).
+  #define D9MT_MICRO_BEG(var) \
+    uint64_t var = ::dxvk::d9mt::traceEnabled() ? ::dxvk::d9mt::microNow() : 0u
+  #define D9MT_MICRO_END(i, var) \
+    do { if (var) ::dxvk::d9mt::microAdd((i), ::dxvk::d9mt::microNow() - (var)); } while (0)
+#endif
+
   // RAII scope: reads the clock only when tracing is on.
   struct ScopedZone {
     uint32_t z;
@@ -127,7 +227,8 @@ namespace dxvk::d9mt {
 #ifdef TRACY_ENABLE
     TracyCZoneCtx tracy;
 #endif
-    explicit ScopedZone(uint32_t zone) : z(zone), start(0), on(traceEnabled()) {
+    explicit ScopedZone(uint32_t zone) : z(zone), start(0),
+        on(traceEnabled() && (traceZoneMask() & (1u << zone))) {
       if (on) start = qpcNow();
 #ifdef TRACY_ENABLE
       tracy = ___tracy_emit_zone_begin(zoneSrcLoc(zone), 1);
@@ -198,6 +299,24 @@ namespace dxvk::d9mt {
       const double maxUs = mx * 1.0e6 / freq;
       std::fprintf(f, " %s x%llu %.2fms(mx%.0fus)",
         zoneName(i), (unsigned long long) c, totMs, maxUs);
+    }
+
+    // Micro-probes: self-calibrate rdtsc ticks -> ms against this frame's QPC
+    // wall time (rdtsc delta over the same present-to-present interval).
+    static uint64_t lastRdtsc = 0;
+    const uint64_t  rdNow     = microNow();
+    const double    rdPerMs   = (lastRdtsc && frameMs > 0.0)
+      ? double(rdNow - lastRdtsc) / frameMs : 0.0;
+    lastRdtsc = rdNow;
+
+    MicroAccum* mt = microTable();
+    for (uint32_t i = 0; i < MicroCount; i++) {
+      const uint64_t c  = mt[i].count.exchange(0, std::memory_order_relaxed);
+      const uint64_t tk = mt[i].ticks.exchange(0, std::memory_order_relaxed);
+      if (!c)
+        continue;
+      const double ms = rdPerMs > 0.0 ? tk / rdPerMs : 0.0;
+      std::fprintf(f, " %s x%llu %.2fms", microName(i), (unsigned long long) c, ms);
     }
 
     std::fputc('\n', f);

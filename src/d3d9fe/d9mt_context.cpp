@@ -302,6 +302,7 @@ namespace dxvk::d9mt {
   }
 
   static CmdListState& cmdListState(const void* list) {
+    D9MT_MICRO(0);
     std::lock_guard<std::mutex> lock(s_cmdListMutex);
     auto& slot = s_cmdListStates[list];
     if (!slot)
@@ -1542,6 +1543,7 @@ namespace dxvk::d9mt {
   }
 
   static ContextDrawState& ctxDrawStateImpl(const void* ctx) {
+    D9MT_MICRO(0);
     std::lock_guard<std::mutex> lock(s_ctxDrawMutex);
     auto& slot = s_ctxDrawStates[ctx];
     if (!slot)
@@ -4658,6 +4660,7 @@ namespace dxvk {
   // ----------------------------------------------------------------------
 
   bool DxvkContext::updateGraphicsPipelineState() {
+    D9MT_ZONE(d9mt::ZonePsoState);
     auto& dstate = d9mt::ctxDrawStateImpl(this);
 
     const auto& vs = m_state.gp.shaders.vs;
@@ -4762,6 +4765,7 @@ namespace dxvk {
 
 
   void DxvkContext::updateIndexBufferBinding() {
+    D9MT_ZONE(d9mt::ZoneIdxBind);
     // index buffers are draw arguments on Metal (no encoder state); only
     // lifetime tracking happens here
     if (m_state.vi.indexBuffer.defined())
@@ -4778,6 +4782,24 @@ namespace dxvk {
 
   void DxvkContext::updateDynamicState() {
     D9MT_ZONE(d9mt::ZoneDynState);
+
+    // Every block below is individually gated on its own dirty flag, so when none
+    // of the dynamic-state flags are set the whole function emits nothing. This is
+    // called unconditionally on every draw; bail out before the two state lookups
+    // when there is nothing to do. Behavior-identical — it only elides work that
+    // would produce no commands — so it can't affect rendering. Whatever re-dirties
+    // these flags (setters, pass restart) is unchanged.
+    if (!m_flags.any(
+          DxvkContextFlag::GpDirtyViewport,
+          DxvkContextFlag::GpDirtyRasterizerState,
+          DxvkContextFlag::GpDirtyDepthBias,
+          DxvkContextFlag::GpDirtyDepthClip,
+          DxvkContextFlag::GpDirtyBlendConstants,
+          DxvkContextFlag::GpDirtyDepthTest,
+          DxvkContextFlag::GpDirtyStencilTest,
+          DxvkContextFlag::GpDirtyStencilRef))
+      return;
+
     auto& dstate = d9mt::ctxDrawStateImpl(this);
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
 
@@ -4935,6 +4957,7 @@ namespace dxvk {
 
       // ---- set-0 argument buffer
       if (resDirty && shader->abEntryCount) {
+        D9MT_MICRO_BEG(tAbAlloc);
         DxvkBufferSlice slice = dstate.ring->alloc(
           VkDeviceSize(shader->abEntryCount) * 8u);
 
@@ -4944,7 +4967,9 @@ namespace dxvk {
           return false;
         }
         std::memset(ab, 0, size_t(shader->abEntryCount) * 8u);
+        D9MT_MICRO_END(12, tAbAlloc);
 
+        D9MT_MICRO_BEG(tAbLoop);
         for (const auto& ref : shader->resources) {
           if (ref.abId >= shader->abEntryCount)
             continue; // defensive: never write outside the allocation
@@ -5000,6 +5025,9 @@ namespace dxvk {
           }
         }
 
+        D9MT_MICRO_END(13, tAbLoop);
+
+        D9MT_MICRO_BEG(tAbEnc);
         auto sliceInfo = slice.getSliceInfo();
 
         wmtcmd_render_setbuffer cmd = { };
@@ -5010,10 +5038,12 @@ namespace dxvk {
         d9mt::encodeRenderCmd(cstate, &cmd);
 
         m_cmd->track(slice.buffer(), DxvkAccess::Read);
+        D9MT_MICRO_END(14, tAbEnc);
       }
 
       // ---- push data block (+ sampler heap indices at their blockOffsets)
       if ((pushDirty || resDirty) && shader->pushBufferIndex >= 0 && shader->pushDataSize) {
+        D9MT_MICRO_BEG(tPush);
         DxvkBufferSlice slice = dstate.ring->alloc(shader->pushDataSize);
 
         uint8_t* data = reinterpret_cast<uint8_t*>(slice.mapPtr(0));
@@ -5032,6 +5062,9 @@ namespace dxvk {
           }
         }
 
+        D9MT_MICRO_END(15, tPush);
+
+        D9MT_MICRO_BEG(tSmpLoop);
         for (const auto& ref : shader->samplers) {
           uint16_t index = 0u;
 
@@ -5044,7 +5077,9 @@ namespace dxvk {
           if (uint32_t(ref.blockOffset) + 2u <= shader->pushDataSize)
             std::memcpy(data + ref.blockOffset, &index, sizeof(index));
         }
+        D9MT_MICRO_END(16, tSmpLoop);
 
+        D9MT_MICRO_BEG(tPushEnc);
         auto sliceInfo = slice.getSliceInfo();
 
         wmtcmd_render_setbuffer cmd = { };
@@ -5055,6 +5090,7 @@ namespace dxvk {
         d9mt::encodeRenderCmd(cstate, &cmd);
 
         m_cmd->track(slice.buffer(), DxvkAccess::Read);
+        D9MT_MICRO_END(17, tPushEnc);
       }
 
       // ---- set-15 sampler heap
@@ -5088,8 +5124,12 @@ namespace dxvk {
 
   template<bool Indexed, bool Indirect, bool Resolve>
   bool DxvkContext::commitGraphicsState() {
+    D9MT_ZONE(d9mt::ZoneCommit);
+    D9MT_MICRO_BEG(t1);
     auto& dstate = d9mt::ctxDrawStateImpl(this);
+    D9MT_MICRO_END(1, t1);
 
+    D9MT_MICRO_BEG(t2);
     if (m_state.gp.shaders.gs != nullptr) {
       static bool s_warned = false;
       if (!std::exchange(s_warned, true))
@@ -5106,11 +5146,15 @@ namespace dxvk {
         Logger::err("d9mt: draw without any render target — skipped");
       return false;
     }
+    D9MT_MICRO_END(2, t2);
 
+    D9MT_MICRO_BEG(t3);
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
+    D9MT_MICRO_END(3, t3);
 
     // (re)start the render pass when none is active, or when pending clears
     // must turn into load actions to keep clear/draw ordering correct
+    D9MT_MICRO_BEG(t4);
     if (!m_flags.test(DxvkContextFlag::GpRenderPassBound)
      || cstate.kind != d9mt::EncoderKind::Render
      || !m_deferredClears.empty()) {
@@ -5123,7 +5167,9 @@ namespace dxvk {
       if (!m_flags.test(DxvkContextFlag::GpRenderPassBound))
         return false;
     }
+    D9MT_MICRO_END(4, t4);
 
+    D9MT_MICRO_BEG(t5);
     if (m_flags.test(DxvkContextFlag::GpDirtyPipeline)) {
       // new shader pair: update the spec-constant mask, force PSO lookup
       uint32_t mask = 0u;
@@ -5137,14 +5183,21 @@ namespace dxvk {
       m_flags.clr(DxvkContextFlag::GpDirtyPipeline);
       m_flags.set(DxvkContextFlag::GpDirtyPipelineState);
     }
+    D9MT_MICRO_END(5, t5);
 
+    D9MT_MICRO_BEG(t6);
     if (m_flags.any(
           DxvkContextFlag::GpDirtyPipelineState,
           DxvkContextFlag::GpDirtySpecConstants) || !dstate.pso) {
-      if (!this->updateGraphicsPipelineState())
+      bool ok = this->updateGraphicsPipelineState();
+      D9MT_MICRO_END(6, t6);
+      if (!ok)
         return false;
+    } else {
+      D9MT_MICRO_END(6, t6);
     }
 
+    D9MT_MICRO_BEG(t7);
     if (cstate.lastRenderPso != dstate.pso->pso) {
       wmtcmd_render_setpso cmd = { };
       cmd.type = WMTRenderCommandSetPSO;
@@ -5152,19 +5205,31 @@ namespace dxvk {
       d9mt::encodeRenderCmd(cstate, &cmd);
       cstate.lastRenderPso = dstate.pso->pso;
     }
+    D9MT_MICRO_END(7, t7);
 
+    D9MT_MICRO_BEG(t8);
     if (m_flags.test(DxvkContextFlag::GpDirtyVertexBuffers))
       this->updateVertexBufferBindings();
+    D9MT_MICRO_END(8, t8);
 
+    D9MT_MICRO_BEG(t9);
     if (Indexed && m_flags.test(DxvkContextFlag::GpDirtyIndexBuffer))
       this->updateIndexBufferBinding();
+    D9MT_MICRO_END(9, t9);
 
+    D9MT_MICRO_BEG(t10);
     this->updateDynamicState();
+    D9MT_MICRO_END(10, t10);
 
+    D9MT_MICRO_BEG(t11);
     if (m_descriptorState.hasDirtyResources(VK_SHADER_STAGE_ALL_GRAPHICS)
      || m_flags.test(DxvkContextFlag::DirtyPushData)) {
-      if (!this->updateGraphicsShaderResources())
+      bool ok = this->updateGraphicsShaderResources();
+      D9MT_MICRO_END(11, t11);
+      if (!ok)
         return false;
+    } else {
+      D9MT_MICRO_END(11, t11);
     }
 
     return true;
