@@ -5054,10 +5054,18 @@ namespace dxvk {
         std::memset(data, 0, shader->pushDataSize);
 
         for (const auto& block : shader->pushBlocks) {
-          for (uint32_t dw = 0; dw < block.size / 4u; dw++) {
-            if (!(block.resourceMask & (uint64_t(1u) << dw))) {
-              std::memcpy(data + block.dstOffset + 4u * dw,
-                &m_state.pc.constantData[block.srcOffset + 4u * dw], 4u);
+          if (block.resourceMask == 0u) {
+            // No interleaved sampler-index dwords: the per-dword loop would copy
+            // every dword, so blast the whole block in one memcpy. (Blocks are
+            // dword-aligned, so block.size bytes is exact.)
+            std::memcpy(data + block.dstOffset,
+              &m_state.pc.constantData[block.srcOffset], block.size);
+          } else {
+            for (uint32_t dw = 0; dw < block.size / 4u; dw++) {
+              if (!(block.resourceMask & (uint64_t(1u) << dw))) {
+                std::memcpy(data + block.dstOffset + 4u * dw,
+                  &m_state.pc.constantData[block.srcOffset + 4u * dw], 4u);
+              }
             }
           }
         }
