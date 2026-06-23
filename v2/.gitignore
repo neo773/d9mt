@@ -1,0 +1,8 @@
+# build artifacts
+build/
+# host-only tooling clone (re-clone: git clone https://github.com/apple/metal-cpp)
+third_party/metal-cpp/
+# offscreen example outputs
+examples/triangle/triangle
+examples/triangle/*.bmp
+examples/triangle/*.png
