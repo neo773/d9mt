@@ -29,6 +29,7 @@
 
 #include "d9mt_backend.h"
 #include "d9mt_trace.h"
+#include "d9mt_hud.h"
 
 #include "../../vendor/dxvk/src/dxvk/dxvk_buffer.h"
 #include "../../vendor/dxvk/src/dxvk/dxvk_device.h"
@@ -693,10 +694,17 @@ namespace dxvk {
         VkDeviceSize cap = capFor(size);
         std::lock_guard<dxvk::mutex> lock(m_mutex);
         auto it = m_free.find(cap);
-        if (it == m_free.end() || it->second.empty())
+        if (it == m_free.end() || it->second.empty()) {
+#ifdef D9MT_HUD
+          ::d9mt::hud::g_poolMisses.fetch_add(1, std::memory_order_relaxed);
+#endif
           return false;
+        }
         out = it->second.back();
         it->second.pop_back();
+#ifdef D9MT_HUD
+        ::d9mt::hud::g_poolHits.fetch_add(1, std::memory_order_relaxed);
+#endif
         return true;
       }
 

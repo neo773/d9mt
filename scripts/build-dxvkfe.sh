@@ -52,6 +52,17 @@ else
   OPT_FLAGS=(-O2)
   LINK_OPT=()
 fi
+# D9MT_HUD=1 -> compile in the custom in-driver HUD (draws / bindRes µs / buffer
+# pool hit-rate, drawn on Apple's Metal Performance HUD). Composes with any base
+# build (RELEASE+HUD = the "profile" config: production speed + our metrics).
+# Distinct obj dir so toggling the flag forces a recompile (mtime cache is blind
+# to flag changes — see the note above).
+HUD="${D9MT_HUD:-0}"
+if [[ "$HUD" == 1 ]]; then
+  OPT_FLAGS+=(-DD9MT_HUD)
+  OBJ="${OBJ}-hud"
+  echo "[dxvkfe] + D9MT_HUD — custom in-driver HUD compiled in"
+fi
 mkdir -p "$OBJ" "$GEN"
 
 CXX=i686-w64-mingw32-g++

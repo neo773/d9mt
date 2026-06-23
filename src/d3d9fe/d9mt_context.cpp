@@ -32,6 +32,7 @@
 
 #include "d9mt_backend.h"
 #include "d9mt_trace.h"
+#include "d9mt_hud.h"
 #include "d9mt_draw.h"
 
 #include "../../vendor/dxvk/src/util/thread.h"
@@ -4679,9 +4680,20 @@ namespace dxvk {
       return false; // creation failure already logged once
 
     if (dstate.pso != entry) {
-      // shader pair / AB layout may have changed: rebuild all bindings
+      // The set-0 argument-buffer LAYOUT comes from shader reflection, so it
+      // depends only on the vs/fs pair — NOT on blend/raster/RT-format state.
+      // GTA IV swaps PSOs for state-only changes constantly while keeping the
+      // same shaders and the same bound resources; forcing a full resource
+      // rebuild (the expensive AB assembly + residency + track loop) on those
+      // is wasted work. Only re-dirty resources when the shader pair actually
+      // changed. Real resource changes still rebuild: per-resource binds dirty
+      // descriptors themselves, DISCARD renames dirty via invalidateBuffer, and
+      // pass restarts re-dirty independently in startRenderPass. Push data
+      // (constants + sampler-heap indices) still refreshes on every PSO swap.
+      const d9mt::PsoEntry* prev = dstate.pso;
       dstate.pso = entry;
-      m_descriptorState.dirtyStages(VK_SHADER_STAGE_ALL_GRAPHICS);
+      if (!prev || prev->vs != entry->vs || prev->fs != entry->fs)
+        m_descriptorState.dirtyStages(VK_SHADER_STAGE_ALL_GRAPHICS);
       m_flags.set(DxvkContextFlag::DirtyPushData);
     }
 
@@ -4868,6 +4880,7 @@ namespace dxvk {
 
   bool DxvkContext::updateGraphicsShaderResources() {
     D9MT_ZONE(d9mt::ZoneBindRes);
+    D9MT_HUD_BINDRES_TIMER();
     auto& dstate = d9mt::ctxDrawStateImpl(this);
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
 
@@ -5216,6 +5229,9 @@ namespace dxvk {
     }
 
     m_cmd->addStatCtr(DxvkStatCounter::CmdDrawCalls, count);
+#ifdef D9MT_HUD
+    ::d9mt::hud::g_draws.fetch_add(count, std::memory_order_relaxed);
+#endif
   }
 
 
@@ -5327,6 +5343,9 @@ namespace dxvk {
     }
 
     m_cmd->addStatCtr(DxvkStatCounter::CmdDrawCalls, count);
+#ifdef D9MT_HUD
+    ::d9mt::hud::g_draws.fetch_add(count, std::memory_order_relaxed);
+#endif
   }
 
 }

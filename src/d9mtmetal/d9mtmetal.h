@@ -24,7 +24,33 @@ enum d9mt_unix_func {
    * and the source bytes; the source is only read on a cache MISS. The
    * .metallib bytes never cross this ABI — only a handle comes back up. */
   D9MT_FUNC_LIBRARY_FOR_KEY = 2,
+  /* macOS 26+ Metal HUD: set a custom label's text color. On macOS 27 the HUD
+   * renders custom labels in black by default (invisible on the dark overlay);
+   * winemetal exposes addLabel/updateLabel but NOT the color setter, so we add
+   * it here. hud + key are raw ObjC handles obtained via winemetal (same
+   * process, interoperable per the ABI note above). */
+  D9MT_FUNC_HUD_SET_COLOR = 3,
+  /* Programmatic Metal frame capture to a .gputrace file (Xcode frame debugger).
+   * Wine can't be attached by Xcode live, so we drive MTLCaptureManager
+   * ourselves. Requires MTL_CAPTURE_ENABLED=1 at launch. action: 1=begin, 0=end.
+   * begin captures all command buffers on `queue` until end is called. */
+  D9MT_FUNC_CAPTURE = 4,
   D9MT_FUNC_COUNT,
+};
+
+struct d9mt_capture_params {
+  uint64_t queue;     /* in: MTLCommandQueue handle (begin only)           */
+  uint64_t path_ptr;  /* in: UTF-8 output .gputrace path (begin only)      */
+  uint64_t path_len;  /* in */
+  uint32_t action;    /* in: 1=begin, 0=end                                */
+  uint32_t ret_ok;    /* out: 1 if the action succeeded                    */
+};
+
+struct d9mt_hud_color_params {
+  uint64_t hud;          /* in: _CADeveloperHUDProperties instance handle */
+  uint64_t key;          /* in: NSString label key handle                 */
+  uint32_t name_color;   /* in: 0xAARRGGBB (or 0xFFFFFFFF for white)      */
+  uint32_t value_color;  /* in */
 };
 
 /* source_kind values (InputKind). Today every backend is fed MSL_TEXT;
