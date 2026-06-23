@@ -32,6 +32,7 @@
 
 #include "d9mt_backend.h"
 #include "d9mt_trace.h"
+#include "d9mt_hud.h"
 #include "d9mt_draw.h"
 
 #include "../../vendor/dxvk/src/util/thread.h"
@@ -4868,6 +4869,7 @@ namespace dxvk {
 
   bool DxvkContext::updateGraphicsShaderResources() {
     D9MT_ZONE(d9mt::ZoneBindRes);
+    D9MT_HUD_BINDRES_TIMER();
     auto& dstate = d9mt::ctxDrawStateImpl(this);
     auto& cstate = d9mt::cmdListState(m_cmd.ptr());
 
@@ -5216,6 +5218,9 @@ namespace dxvk {
     }
 
     m_cmd->addStatCtr(DxvkStatCounter::CmdDrawCalls, count);
+#ifdef D9MT_HUD
+    ::d9mt::hud::g_draws.fetch_add(count, std::memory_order_relaxed);
+#endif
   }
 
 
@@ -5327,6 +5332,9 @@ namespace dxvk {
     }
 
     m_cmd->addStatCtr(DxvkStatCounter::CmdDrawCalls, count);
+#ifdef D9MT_HUD
+    ::d9mt::hud::g_draws.fetch_add(count, std::memory_order_relaxed);
+#endif
   }
 
 }

@@ -30,6 +30,13 @@
 #include <vector>
 
 #include "d9mt_backend.h"
+#include "d9mt_hud.h"
+
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "../../vendor/dxvk/src/dxvk/dxvk_device.h"
 #include "../../vendor/dxvk/src/dxvk/dxvk_presenter.h"
@@ -38,6 +45,86 @@
 #include "../../vendor/dxvk/src/wsi/wsi_window.h"
 
 namespace dxvk::d9mt {
+
+  // --------------------------------------------------------------------------
+  // Multi-frame Metal frame capture. Enabled by D9MT_CAPTURE=1 (launcher pairs
+  // it with MTL_CAPTURE_ENABLED=1). When the trigger file "d9mt-capture" appears
+  // in the cwd (game dir): wait a short delay (so you can unpause), then capture
+  // N frames to a .gputrace the user opens in Xcode.
+  //   frames: D9MT_CAPTURE_FRAMES (default 12)
+  //   delay : D9MT_CAPTURE_DELAY  seconds (default 5)
+  // --------------------------------------------------------------------------
+  static void captureTick(obj_handle_t queue) {
+    static const bool enabled = [] {
+      const char* v = std::getenv("D9MT_CAPTURE");
+      return v && v[0] == '1';
+    }();
+    if (!enabled)
+      return;
+
+    static const int kFrames = [] {
+      const char* v = std::getenv("D9MT_CAPTURE_FRAMES");
+      int n = v ? std::atoi(v) : 0;
+      return (n > 0 && n <= 600) ? n : 12;
+    }();
+    static const double kDelay = [] {
+      const char* v = std::getenv("D9MT_CAPTURE_DELAY");
+      double d = v ? std::atof(v) : -1.0;
+      return (d >= 0.0 && d <= 60.0) ? d : 5.0;
+    }();
+
+    enum State { Idle, Armed, Capturing };
+    static State state = Idle;
+    static std::chrono::steady_clock::time_point armAt;
+    static int captured = 0;
+
+    switch (state) {
+    case Idle: {
+      struct stat st;
+      if (::stat("d9mt-capture", &st) != 0)
+        return;
+      ::unlink("d9mt-capture");
+      armAt = std::chrono::steady_clock::now();
+      state = Armed;
+      Logger::warn(str::format("d9mt: capture armed — starting in ", kDelay,
+                               "s (", kFrames, " frames). Unpause now."));
+      return;
+    }
+    case Armed: {
+      double waited = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - armAt).count();
+      if (waited < kDelay)
+        return;
+      const char* path = "d9mt-frame.gputrace";
+      struct d9mt_capture_params p = {};
+      p.queue = (uint64_t)queue;
+      p.path_ptr = (uint64_t)(uintptr_t)path;
+      p.path_len = std::strlen(path);
+      p.action = 1;
+      D9MT_UnixCall(D9MT_FUNC_CAPTURE, &p);
+      if (p.ret_ok) {
+        state = Capturing;
+        captured = 0;
+        Logger::warn("d9mt: capturing…");
+      } else {
+        state = Idle;
+        Logger::warn("d9mt: frame capture failed to start (MTL_CAPTURE_ENABLED?)");
+      }
+      return;
+    }
+    case Capturing: {
+      if (++captured < kFrames)
+        return;
+      struct d9mt_capture_params p = {};
+      p.action = 0;
+      D9MT_UnixCall(D9MT_FUNC_CAPTURE, &p);
+      state = Idle;
+      Logger::warn(str::format("d9mt: capture written to d9mt-frame.gputrace (",
+                               kFrames, " frames)"));
+      return;
+    }
+    }
+  }
 
   // ==========================================================================
   // Presenter side state: Metal window objects + the proxy image. The
@@ -663,6 +750,13 @@ namespace dxvk {
 
             MTLCommandBuffer_presentDrawable(cmdbuf, drawable);
             MTLCommandBuffer_commit(cmdbuf);
+
+            // Custom HUD: once per displayed frame, push our D3D9-internal
+            // counters onto Apple's Metal Performance HUD. No-op unless -DD9MT_HUD.
+            D9MT_HUD_FRAME();
+
+            // One-shot frame capture (no-op unless D9MT_CAPTURE=1 + trigger file).
+            d9mt::captureTick(queue);
 
             // Frame signal fires when the present command buffer retires.
             // Keep presenter + proxy alive until then.

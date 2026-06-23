@@ -6,6 +6,8 @@
  */
 #import <Metal/Metal.h>
 #import <Foundation/Foundation.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 
 #include <dispatch/dispatch.h>
 #include <fcntl.h>
@@ -538,8 +540,18 @@ static NSData *d9mt_cli_compile(const char *source, size_t source_len,
   return result;
 }
 
-/* SourceBackend: the live, always-available floor. Returns a retained
- * MTLLibrary directly (the one backend exempt from the bytes contract). */
+/* SourceBackend: the live, in-process compile path — now the ONLY producer.
+ * Uses the ASYNC newLibraryWithSource:completionHandler: so the calling
+ * (PSO-worker) thread does NOT hold Metal's client compile lock while the
+ * MTLCompilerService XPC does the work — that lock is what stalled the render
+ * thread and reddened the HUD. We block this worker on a semaphore instead;
+ * the completion handler runs on a Metal-internal queue, so no self-deadlock.
+ * MTLCompilerService persists its compiled-shader cache cross-process, so a
+ * "cold" first compile warms every later process (~0.5ms) — that daemon cache
+ * replaces the old on-disk .metallib byte cache.
+ *
+ * Returns a retained (+1) MTLLibrary; sets *err_out to a retained (+1) NSError
+ * on failure (caller owns it, hands it up the ABI). */
 static id<MTLLibrary>
 d9mt_source_compile(id<MTLDevice> device, const char *source,
                     size_t source_len, bool fast_math, NSError **err_out) {
@@ -550,12 +562,33 @@ d9mt_source_compile(id<MTLDevice> device, const char *source,
     return nil;
   MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
   opts.languageVersion = MTLLanguageVersion3_0;
-  opts.mathMode = MTLMathModeFast;  // fast always — see d9mt_library_for_source
-  id<MTLLibrary> lib = [device newLibraryWithSource:src options:opts
-                                              error:err_out];
+  opts.mathMode = MTLMathModeFast;  // fast always
+
+  __block id<MTLLibrary> out_lib = nil;
+  __block NSError *out_err = nil;
+  dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+  [device newLibraryWithSource:src
+                       options:opts
+             completionHandler:^(id<MTLLibrary> lib, NSError *err) {
+    /* Block runs on a Metal-internal queue, not this worker thread. Retain the
+     * results so they survive past the autoreleased block scope and the
+     * caller's @autoreleasepool drain (+1 to match the ABI contract). */
+    if (lib)
+      out_lib = [lib retain];
+    else if (err)
+      out_err = [err retain];
+    dispatch_semaphore_signal(sem);
+  }];
+  dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+  dispatch_release(sem);
+
   [opts release];
   [src release];
-  return lib;
+  if (!out_lib && err_out)
+    *err_out = out_err;  /* already +1; caller hands it up */
+  else
+    [out_err release];   /* lib succeeded but a warning err came too: drop it */
+  return out_lib;
 }
 
 static NTSTATUS d9mt_library_for_key(void *args) {
@@ -578,56 +611,93 @@ static NTSTATUS d9mt_library_for_key(void *args) {
     size_t source_len = (size_t)p->source_len;
     bool fast_math = (p->target_flags & D9MT_TARGET_FAST_MATH) != 0;
 
-    NSData *fullKey = d9mt_cache_key((const void *)(uintptr_t)p->key_ptr,
-                                     p->key_len);
-
-    /* 1. cache hit -> load, no source compiler. */
-    id<MTLLibrary> lib = d9mt_cache_lookup(device, fullKey);
-    if (lib) {
-      p->ret_library = (uint64_t)(uintptr_t)lib;
-      p->ret_status = D9MT_LIBRARY_HIT;
-      return STATUS_SUCCESS;
-    }
-
-    /* 2. miss -> compile out-of-process (Cli), store bytes, load. Only MSL
-     * source is supported by the Phase 1 backends. */
+    /* Single path: in-process newLibraryWithSource. No CLI spawn, no temp
+     * files, no on-disk .metallib byte cache — MTLCompilerService persists its
+     * compiled-shader cache cross-process, so the daemon warms every later
+     * launch. Only MSL text is accepted. */
     if (source && source_len &&
         p->source_kind == (uint32_t)D9MT_SOURCE_MSL_TEXT) {
-      NSData *bytes = d9mt_cli_compile(source, source_len, fast_math);
-      if (bytes) {
-        d9mt_cache_store(fullKey, bytes.bytes, bytes.length);
-        dispatch_data_t dd = dispatch_data_create(
-            bytes.bytes, bytes.length, NULL, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-        NSError *err = nil;
-        lib = [device newLibraryWithData:dd error:&err];
-        dispatch_release(dd);
-        if (lib) {
-          p->ret_library = (uint64_t)(uintptr_t)lib;
-          p->ret_status = D9MT_LIBRARY_COMPILED;
-          return STATUS_SUCCESS;
-        }
-        /* Freshly compiled bytes that won't load: fall through to source. err
-         * is a +0 out-param (autoreleased) — do NOT release it, the pool
-         * reclaims it. */
-      }
-    }
-
-    /* 3. floor: live source compile, never worse than today. */
-    if (source && source_len) {
       NSError *err = nil;
-      lib = d9mt_source_compile(device, source, source_len, fast_math, &err);
+      id<MTLLibrary> lib =
+          d9mt_source_compile(device, source, source_len, fast_math, &err);
       if (lib) {
         p->ret_library = (uint64_t)(uintptr_t)lib;
-        p->ret_status = D9MT_LIBRARY_FELL_BACK;
-        /* err here is at most a +0 autoreleased warning — leave it to the
-         * pool, never release a +0 out-param. */
+        p->ret_status = D9MT_LIBRARY_COMPILED;
         return STATUS_SUCCESS;
       }
-      /* retain to hand the failure error up across the ABI (+1). */
-      p->ret_error = (uint64_t)(uintptr_t)[err retain];
+      /* d9mt_source_compile returns the error already retained (+1); hand it
+       * straight up the ABI without re-retaining. */
+      p->ret_error = (uint64_t)(uintptr_t)err;
     }
   }
 
+  return STATUS_SUCCESS;
+}
+
+/* Set a custom HUD label's name/value color via the private
+ * -[_CADeveloperHUDProperties updateMetricColor:nameColor:valueColor:]
+ * (args: NSString key, uint32 nameColor, uint32 valueColor). Without this the
+ * label text defaults to black on macOS 27 and is invisible on the dark HUD. */
+static NTSTATUS d9mt_hud_set_color(void *args) {
+  struct d9mt_hud_color_params *p = args;
+  id hud = (id)(uintptr_t)p->hud;
+  id key = (id)(uintptr_t)p->key;
+  if (!hud || !key)
+    return STATUS_SUCCESS;
+  SEL sel = sel_registerName("updateMetricColor:nameColor:valueColor:");
+  if (![hud respondsToSelector:sel])
+    return STATUS_SUCCESS; /* older OS without the metric-color API: no-op */
+  ((void (*)(id, SEL, id, uint32_t, uint32_t))objc_msgSend)(
+      hud, sel, key, p->name_color, p->value_color);
+  return STATUS_SUCCESS;
+}
+
+/* Programmatic Metal frame capture to a .gputrace document. begin: start
+ * capturing all command buffers on the given queue, writing to path. end: stop
+ * (flushes the file). Requires MTL_CAPTURE_ENABLED=1 in the launch environment;
+ * otherwise startCapture fails and ret_ok stays 0. */
+static NTSTATUS d9mt_capture(void *args) {
+  struct d9mt_capture_params *p = args;
+  p->ret_ok = 0;
+  @autoreleasepool {
+    MTLCaptureManager *mgr = [MTLCaptureManager sharedCaptureManager];
+    if (p->action == 0) {
+      if (mgr.isCapturing) {
+        [mgr stopCapture];
+        p->ret_ok = 1;
+      }
+      return STATUS_SUCCESS;
+    }
+
+    id<MTLCommandQueue> queue = (id<MTLCommandQueue>)(uintptr_t)p->queue;
+    if (!queue)
+      return STATUS_SUCCESS;
+    if (![mgr supportsDestination:MTLCaptureDestinationGPUTraceDocument]) {
+      NSLog(@"[d9mtmetal] GPU trace capture unsupported (MTL_CAPTURE_ENABLED=1 "
+            @"missing, or developer mode off)");
+      return STATUS_SUCCESS;
+    }
+    NSString *path = [[[NSString alloc]
+        initWithBytes:(const void *)(uintptr_t)p->path_ptr
+               length:(NSUInteger)p->path_len
+             encoding:NSUTF8StringEncoding] autorelease];
+    if (!path)
+      return STATUS_SUCCESS;
+
+    /* startCapture refuses to overwrite an existing document. */
+    [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+
+    MTLCaptureDescriptor *desc = [[[MTLCaptureDescriptor alloc] init] autorelease];
+    desc.captureObject = queue;
+    desc.destination = MTLCaptureDestinationGPUTraceDocument;
+    desc.outputURL = [NSURL fileURLWithPath:path];
+    NSError *err = nil;
+    if ([mgr startCaptureWithDescriptor:desc error:&err]) {
+      p->ret_ok = 1;
+    } else {
+      NSLog(@"[d9mtmetal] startCapture failed: %@", err);
+    }
+  }
   return STATUS_SUCCESS;
 }
 
@@ -638,6 +708,8 @@ const unixlib_entry_t __wine_unix_call_funcs[D9MT_FUNC_COUNT] = {
     d9mt_new_library_from_source,
     d9mt_new_render_pso,
     d9mt_library_for_key,
+    d9mt_hud_set_color,
+    d9mt_capture,
 };
 
 /* identical param layouts for 32-bit callers (see header ABI rule) */
@@ -646,4 +718,6 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[D9MT_FUNC_COUNT] = {
     d9mt_new_library_from_source,
     d9mt_new_render_pso,
     d9mt_library_for_key,
+    d9mt_hud_set_color,
+    d9mt_capture,
 };
