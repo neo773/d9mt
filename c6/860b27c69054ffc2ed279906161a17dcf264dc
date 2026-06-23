@@ -1,0 +1,19 @@
+src/d3d9fe/d9mt_context.cpp
+  s_85f47c9b3164ad::t_b8418f92d420ad 4696
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.10",
+  "base_commit_sha": "c6860b27c69054ffc2ed279906161a17dcf264dc",
+  "prompts": {},
+  "sessions": {
+    "s_85f47c9b3164ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02672ef4-4d8a-4544-a085-074fc349e128",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "neo773 <neo773@protonmail.com>"
+    }
+  }
+}
