@@ -6,3 +6,12 @@ third_party/metal-cpp/
 examples/triangle/triangle
 examples/triangle/*.bmp
 examples/triangle/*.png
+
+# vendored upstream deps (reproduce with scripts/fetch-deps.sh)
+/util/
+/spirv/
+/wsi/
+/vulkan/
+/dxvk-ref/
+/third_party/dxbc-spirv/
+/third_party/khronos/
