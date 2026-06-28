@@ -43,13 +43,11 @@ static NTSTATUS d9mt_new_library_from_source(void *args) {
 
   MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
   opts.languageVersion = MTLLanguageVersion3_0;
-  // FAST math, unconditionally — the only mode that keeps D3D9 shader semantics
-  // correct here. D3D9 assumes fast-math float behavior; .relaxed/.safe change
-  // reassociation/rounding enough to corrupt shader-computed positions (collapsed
-  // geometry) and cost framerate. Any precision artifact from .fast is a per-shader
-  // translation bug (e.g. unguarded normalize()/rsqrt producing unclamped NaN),
-  // fixed in the SPIR-V->MSL path — never by globally slowing every game's math.
-  opts.mathMode = MTLMathModeFast;
+  // Math mode honors the caller's fast_math flag (d3d9fe shaderFastMath()):
+  // DEFAULT precise (.safe) to fix COD4's residual specular sparkles / thin
+  // slivers; D9MT_FASTMATH=1 opts back into .fast for GPU-bound titles. Must
+  // match the cache-key tag on the d3d9fe side so a flipped mode recompiles.
+  opts.mathMode = p->fast_math ? MTLMathModeFast : MTLMathModeSafe;
 
   NSError *err = nil;
   id<MTLLibrary> lib = [device newLibraryWithSource:src
@@ -511,13 +509,13 @@ static NSData *d9mt_cli_compile(const char *source, size_t source_len,
   }
 
   if (wrote) {
+    // -ffast-math only when the caller asked for it; default precise (omit the
+    // flag) — must match opts.mathMode in the in-process path so the disk cache
+    // is consistent regardless of which backend compiled an entry.
     const char *argv[] = {
         tool.fileSystemRepresentation,
         "-std=metal3.0",
-        // FAST, unconditionally — matches opts.mathMode=fast in the in-process
-        // path (the fast_math arg is ignored; both paths must agree so the disk
-        // cache is consistent regardless of which backend compiled an entry).
-        "-ffast-math",
+        fast_math ? "-ffast-math" : "-fno-fast-math",
         "-o", outPath, inPath, NULL };
     pid_t pid = 0;
     int rc = posix_spawn(&pid, argv[0], NULL, NULL,
@@ -562,7 +560,7 @@ d9mt_source_compile(id<MTLDevice> device, const char *source,
     return nil;
   MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
   opts.languageVersion = MTLLanguageVersion3_0;
-  opts.mathMode = MTLMathModeFast;  // fast always
+  opts.mathMode = fast_math ? MTLMathModeFast : MTLMathModeSafe;  // see d9mt_new_library_from_source
 
   __block id<MTLLibrary> out_lib = nil;
   __block NSError *out_err = nil;

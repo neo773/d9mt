@@ -98,13 +98,23 @@ namespace dxvk::d9mt {
       return s_enabled;
     }
 
-    // Math mode is FIXED to FAST in the native compiler (d9mtmetal unix.m): it's
-    // the mode that preserves D3D9 float semantics. .relaxed/.safe alter
-    // reassociation/rounding enough to corrupt shader-computed positions and cost
-    // framerate, so they are never used. A precision artifact under .fast is a
-    // per-shader translation bug, fixed in the SPIR-V->MSL path. kMetallibMathMode
-    // tags the cache key so libraries compiled under a different mode aren't reused.
-    constexpr uint8_t kMetallibMathMode = 1u; // 0=safe 1=fast 2=relaxed
+    // Fast-math toggle. d9mt's native compiler (d9mtmetal unix.m) historically
+    // forced -ffast-math / MTLMathModeFast, which reorders+contracts float ops and
+    // assumes no NaN/Inf — the source of COD4's residual precision artifacts
+    // (specular sparkles / thin bright slivers). DEFAULT OFF (precise = .safe),
+    // matching DXVK: we're CPU-bound (GPU has headroom) so precise math costs ~no
+    // framerate while fixing correctness. D9MT_FASTMATH=1 re-enables fast for
+    // GPU-bound titles. The choice is folded into the metallib cache key
+    // (metallibMathMode) so toggling recompiles instead of reusing a mismatched lib.
+    bool shaderFastMath() {
+      static const bool s_fast = []() {
+        const char* v = std::getenv("D9MT_FASTMATH");
+        return v && v[0] == '1' && v[1] == '\0';
+      }();
+      return s_fast;
+    }
+    // Cache-key tag for the math mode (0=safe/precise 1=fast); tracks shaderFastMath().
+    inline uint8_t metallibMathMode() { return shaderFastMath() ? 1u : 0u; }
   }
 
   // ==========================================================================
@@ -362,7 +372,7 @@ namespace dxvk::d9mt {
         // Cache path: compute the content key and let the native side resolve
         // hit-load / miss-compile-store-load / live-fallback uniformly. The
         // MSL source is only read native-side on a cache MISS.
-        Sha1Hash key = computeMetallibKey(msl, 0x0300u, kMetallibMathMode,
+        Sha1Hash key = computeMetallibKey(msl, 0x0300u, metallibMathMode(),
                                           uint32_t(D9MT_SOURCE_MSL_TEXT));
 
         d9mt_library_params lp;
@@ -373,7 +383,7 @@ namespace dxvk::d9mt {
         lp.source_ptr   = uint64_t(uintptr_t(msl.data()));
         lp.source_len   = msl.size();
         lp.source_kind  = D9MT_SOURCE_MSL_TEXT;
-        lp.target_flags = 0u; // math mode fixed to relaxed native-side; flag unused
+        lp.target_flags = shaderFastMath() ? D9MT_TARGET_FAST_MATH : 0u;
 
         int status = D9MT_UnixCall(D9MT_FUNC_LIBRARY_FOR_KEY, &lp);
         if (status != 0 || !lp.ret_library) {
@@ -399,7 +409,7 @@ namespace dxvk::d9mt {
         lp.device     = device;
         lp.source_ptr = uint64_t(uintptr_t(msl.data()));
         lp.source_len = msl.size();
-        lp.fast_math  = 0u; // math mode fixed to relaxed native-side; flag unused
+        lp.fast_math  = shaderFastMath() ? 1u : 0u;
 
         int status = D9MT_UnixCall(D9MT_FUNC_NEW_LIBRARY_FROM_SOURCE, &lp);
         if (status != 0 || !lp.ret_library) {
